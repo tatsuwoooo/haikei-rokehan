@@ -1,14 +1,14 @@
 // 背景ロケハン: pick a place in 3D, place ranges (rect / circle / mesh grid), export the data for Blender.
 // One page for phone and PC: the PC layout adds a top-down map next to the 3D view.
-import * as G from "./lib/geo.js?v=202611200034";
-import { registerGsiDem } from "./lib/gsidem.js?v=202611200034";
-import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611200034";
-import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200034";
-import { omtArea } from "./lib/omttile.js?v=202611200034";
-import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200034";
-import { photoMask } from "./lib/phototrees.js?v=202611200034";
-import { placeName } from "./lib/gsiname.js?v=202611200034";
-import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200034";
+import * as G from "./lib/geo.js?v=202611200042";
+import { registerGsiDem } from "./lib/gsidem.js?v=202611200042";
+import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611200042";
+import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200042";
+import { omtArea } from "./lib/omttile.js?v=202611200042";
+import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200042";
+import { photoMask } from "./lib/phototrees.js?v=202611200042";
+import { placeName } from "./lib/gsiname.js?v=202611200042";
+import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200042";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const PC = matchMedia("(min-width: 900px)").matches;
@@ -118,8 +118,10 @@ function addAppLayers(m, role) {
     m.addLayer({id: "cam-cone", type: "fill", source: "cam", filter: ["==", ["geometry-type"], "Polygon"], paint: {"fill-color": "#ff5a4a", "fill-opacity": 0.16}});
     m.addLayer({id: "cam-pt", type: "circle", source: "cam", filter: ["==", ["geometry-type"], "Point"], paint: {"circle-radius": 6, "circle-color": "#ff5a4a", "circle-stroke-color": "#fff", "circle-stroke-width": 2}});
   }
-  m.addLayer({id: "handles", type: "circle", source: "handles", paint: {
-    "circle-radius": PC ? 7 : 10, "circle-color": ["case", ["==", ["get", "type"], "rotate"], ["get", "color"], "#ffffff"],
+  m.addLayer({id: "levers", type: "line", source: "handles", filter: ["==", ["geometry-type"], "LineString"],
+    paint: {"line-color": ["get", "color"], "line-width": 2.5}});
+  m.addLayer({id: "handles", type: "circle", source: "handles", filter: ["==", ["geometry-type"], "Point"], paint: {
+    "circle-radius": ["case", ["==", ["get", "type"], "rotate"], PC ? 9 : 13, PC ? 7 : 10], "circle-color": ["case", ["==", ["get", "type"], "rotate"], ["get", "color"], "#ffffff"],
     "circle-stroke-color": ["get", "color"], "circle-stroke-width": 2.5}});
 }
 
@@ -381,7 +383,9 @@ const colorOf = sh => LEVELS[sh.level].color;
 function renderShapes() {
   const fs = S.shapes.map(sh => ({type: "Feature", properties: {id: sh.id, level: sh.level, color: colorOf(sh), sel: sh.id === sel}, geometry: {type: "Polygon", coordinates: [ringOf(sh)]}}));
   const s = S.shapes.find(x => x.id === sel);
-  const hs = s ? handlesOf(s).map((h, i) => ({type: "Feature", properties: {i, type: h.type, color: colorOf(s)}, geometry: {type: "Point", coordinates: h.p}})) : [];
+  const hl = s ? handlesOf(s) : [];
+  const hs = hl.map((h, i) => ({type: "Feature", properties: {i, type: h.type, color: colorOf(s)}, geometry: {type: "Point", coordinates: h.p}}))
+    .concat(hl.filter(h => h.from).map(h => ({type: "Feature", properties: {type: "lever", color: colorOf(s)}, geometry: {type: "LineString", coordinates: [h.from, h.p]}})));
   for (const m of maps) {
     if (!m.getSource("shapes")) continue;
     m.getSource("shapes").setData({type: "FeatureCollection", features: fs});
@@ -425,9 +429,9 @@ function setDraft(sh) {
 function setTool(t) {
   tool = t;
   $$("[data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
-  const hints = {select: "範囲をタップして選ぶ。角の印で大きさ、青い丸で回転、中をドラッグで移動。",
+  const hints = {select: "範囲をタップして選ぶ。白い印で大きさ、棒の先の色の丸を回して回転、中をドラッグで移動（四角と扇）。",
     rect: "地図をなぞって四角を置きます（タップだけなら 200×120m）。", circle: "中心からなぞって丸を置きます（タップだけなら半径 150m）。",
-    fan: "要（かなめ）の点から、広げたい向きへなぞって扇を置きます（開きは 60°。タップだけなら、見ている向きへ半径 300m）。先の印で長さと向き、両端の印で開きを変えます。",
+    fan: "要（かなめ）の点から、広げたい向きへなぞって扇を置きます（開きは 60°。タップだけなら、見ている向きへ半径 300m）。先の白い印で長さ、両端で開き、棒の先の色の丸で回転。",
     box: "なぞった所の格子をまとめて選びます（タップで 1 マス）。"};
   $("#toolHint").textContent = hints[t];
   if (t === "box" && !S.showGrid) { S.showGrid = true; $("#gridOn").checked = true; renderGrid(); }
@@ -635,7 +639,7 @@ async function loadNear(force) {
 let detail = null, detailLoading = null;
 function ensureDetail() {
   if (detail) return Promise.resolve(detail);
-  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200034").then(m => m.createDetail(map3, ROAD)).then(d => {
+  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200042").then(m => m.createDetail(map3, ROAD)).then(d => {
     map3.addLayer(d.layer, map3.getLayer("grid") ? "grid" : undefined);
     return (detail = d);
   }).catch(e => { console.warn("detail", e); toast("細かい見た目を読み込めませんでした（通信を確かめてください）"); detailLoading = null; return null; });
@@ -989,7 +993,7 @@ window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, get
 // GitHub Pages lets a browser keep each file for 10 minutes, and phones keep a page open for days. tools/stamp.py puts
 // the same version on every file URL and in version.json; when version.json says a newer one is out, the page reloads
 // into it once (at the start, and when you come back to the page after a minute or more away).
-const APP_VERSION = "202611200034";
+const APP_VERSION = "202611200042";
 let hiddenAt = 0;
 async function checkVersion() {
   if (!APP_VERSION || exporting) return;

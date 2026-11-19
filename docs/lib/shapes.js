@@ -5,7 +5,7 @@
 //   fan:    {kind:"fan", c:[lon,lat] the point it opens from, r (m), dir (deg, compass: 0 = north, clockwise),
 //            spread (deg, the whole opening, 5..360)}
 // Every range also has id, name, level ("detail" | "mid" | "far" | "none").
-import { offset, delta, meshBounds, meshCode, meshStep } from "./geo.js?v=202611200034";
+import { offset, delta, meshBounds, meshCode, meshStep } from "./geo.js?v=202611200042";
 
 export const LEVELS = {
   detail: {label: "詳細", color: "#f39a2b", rank: 3},
@@ -58,14 +58,19 @@ export function areaOf(sh) {
   return sh.w * sh.h;
 }
 
-// Handles of a selected range: [{type, p:[lon,lat], i}]
+// Handles of a selected range: [{type, p:[lon,lat], i, from?}]. A rotate handle has `from`, the point its lever
+// line starts at (drawn so the handle reads as something to turn).
 export function handlesOf(sh) {
   if (sh.kind === "circle") return [{type: "move", p: sh.c}, {type: "radius", p: offset(sh.c, sh.r, 0)}];
-  if (sh.kind === "fan") return [{type: "move", p: sh.c}, {type: "rotate", p: along(sh.c, sh.r, sh.dir)},        // tip: length and direction
-    {type: "spread", p: along(sh.c, sh.r, sh.dir - sh.spread / 2)}, {type: "spread", p: along(sh.c, sh.r, sh.dir + sh.spread / 2)}];
+  if (sh.kind === "fan") {
+    const tip = along(sh.c, sh.r, sh.dir);
+    return [{type: "move", p: sh.c}, {type: "radius", p: tip},                                         // tip: length
+      {type: "spread", p: along(sh.c, sh.r, sh.dir - sh.spread / 2)}, {type: "spread", p: along(sh.c, sh.r, sh.dir + sh.spread / 2)},
+      {type: "rotate", p: along(sh.c, sh.r + Math.max(25, sh.r * 0.2), sh.dir), from: tip}];          // beyond the tip: turn
+  }
   const ring = ringOf(sh).slice(0, 4), hs = ring.map((p, i) => ({type: "corner", p, i}));
   if (sh.kind === "rect") {
-    hs.push({type: "rotate", p: offset(sh.c, ...rot(0, sh.h / 2 + Math.max(20, sh.h * 0.18), sh.ang))});
+    hs.push({type: "rotate", p: offset(sh.c, ...rot(0, sh.h / 2 + Math.max(20, sh.h * 0.18), sh.ang)), from: offset(sh.c, ...rot(0, sh.h / 2, sh.ang))});
     hs.push({type: "move", p: sh.c});
   } else hs.push({type: "move", p: centerOf(sh)});
   return hs;
@@ -83,7 +88,7 @@ export function dragHandle(sh, h, p, start, orig) {
   } else if (h.type === "radius") {
     s.r = Math.max(20, Math.hypot(...delta(orig.c, p)));
   } else if (h.type === "rotate" && s.kind === "fan") {
-    s.r = Math.max(20, Math.hypot(...delta(orig.c, p))); s.dir = Math.round(((brg(orig.c, p) % 360) + 360) % 360 * 10) / 10;
+    s.dir = Math.round(((brg(orig.c, p) % 360) + 360) % 360 * 10) / 10;
   } else if (h.type === "spread") {
     s.spread = Math.round(Math.max(5, Math.min(360, 2 * Math.abs(norm180(brg(orig.c, p) - orig.dir)))));
   } else if (h.type === "rotate") {

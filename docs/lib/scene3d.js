@@ -3,7 +3,7 @@
 // crossings, utility poles with wires, street lamps and traffic signals.
 // The scene is built in metres around an origin point: x = east, y = SOUTH (so the map's own axes are not mirrored),
 // z = height above sea level.
-import * as G from "./geo.js?v=202611200034";
+import * as G from "./geo.js?v=202611200042";
 
 const THREE_URL = "https://unpkg.com/three@0.170.0/build/three.module.min.js";
 
