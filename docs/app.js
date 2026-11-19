@@ -7,6 +7,7 @@ import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js";
 import { omtArea } from "./lib/omttile.js";
 import { ROAD, autoProps, treesFor } from "./lib/props.js";
 import { photoMask } from "./lib/phototrees.js";
+import { placeName } from "./lib/gsiname.js";
 import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
@@ -199,13 +200,14 @@ function setCam(p, alt, b, t, D) {
 }
 // Move the camera along the line through a screen point (forward when dist > 0). Never stops: you can fly through
 // buildings and the ground.
-function dolly(dist, sx, sy) {
-  const c = getCam(), cv = map3.getCanvas(), ctc = map3.transform.cameraToCenterDistance || cv.clientHeight * 1.5;
+function dolly(dist, sx, sy) { const n = dollyFrom(getCam(), dist, sx, sy); setCam(n.p, n.alt, n.b, n.t); }
+function dollyFrom(c, dist, sx, sy) {
+  const cv = map3.getCanvas(), ctc = map3.transform.cameraToCenterDistance || cv.clientHeight * 1.5;
   const yaw = sx == null ? 0 : Math.atan((sx - cv.clientWidth / 2) / ctc) / RAD;
   const tilt = sy == null ? 0 : Math.atan((sy - cv.clientHeight / 2) / ctc) / RAD;
   const b = c.b + yaw, t = c.t - tilt;
   const horiz = dist * Math.sin(t * RAD), up = -dist * Math.cos(t * RAD);
-  setCam(G.offset(c.p, horiz * Math.sin(b * RAD), horiz * Math.cos(b * RAD)), c.alt + up, c.b, c.t);
+  return {p: G.offset(c.p, horiz * Math.sin(b * RAD), horiz * Math.cos(b * RAD)), alt: c.alt + up, b: c.b, t: c.t};
 }
 const dollyStep = () => Math.max(1.5, Math.abs(heightAbove(getCam())));     // slower close to the ground, never zero
 // Orbit, the same feel as どこでもロケハン (three.js OrbitControls): the point you look at is fixed when the drag starts,
@@ -234,6 +236,21 @@ function pan(dxPx, dyPx) {                         // move the camera level with
   setCam(p, c.alt, c.b, c.t);
 }
 
+// Two fingers on the phone: move the camera across the screen. Left-right: the scene follows the fingers (as pan above).
+// Up-down: the camera goes the way the fingers go (2026-11-19 user request: slide up = pan up, slide down = pan down),
+// along the screen's own up direction (straight up when looking level, forward when looking straight down).
+function panView(dxPx, dyPx) { const n = panViewFrom(getCam(), dxPx, dyPx); setCam(n.p, n.alt, n.b, n.t); }
+function panViewFrom(c, dxPx, dyPx) {
+  const cv = map3.getCanvas(), ctc = map3.transform.cameraToCenterDistance || cv.clientHeight * 1.5;
+  const h = Math.max(2, Math.abs(heightAbove(c)));
+  const D = c.t < 84 ? h / Math.max(0.15, Math.cos(c.t * RAD)) : h * 6;
+  const mpp = D / ctc;
+  const right = -dxPx * mpp, up = -dyPx * mpp;
+  const fwd = up * Math.cos(c.t * RAD), rise = up * Math.sin(c.t * RAD);
+  const b = c.b * RAD;
+  return {p: G.offset(c.p, right * Math.cos(b) + fwd * Math.sin(b), -right * Math.sin(b) + fwd * Math.cos(b)), alt: c.alt + rise, b: c.b, t: c.t};
+}
+
 // mouse wheel (PC): fly toward the point under the cursor
 map3.getCanvasContainer().addEventListener("wheel", e => {
   e.preventDefault();
@@ -247,11 +264,11 @@ let editingNow = false;                            // set while the range editor
 (function touchCamera() {
   if (PC) return;
   const el = map3.getCanvasContainer();
-  let last = null, orb = null;
+  let last = null, orb = null, two = null;
   const pts = e => [...e.touches].map(t => { const r = el.getBoundingClientRect(); return [t.clientX - r.left, t.clientY - r.top]; });
-  el.addEventListener("touchstart", e => { last = pts(e); orb = null; holding = e.touches.length; const h = $("#hintPhone"); if (h) setTimeout(() => h.remove(), 2500); }, {passive: true});
+  el.addEventListener("touchstart", e => { last = pts(e); orb = null; two = null; holding = e.touches.length; const h = $("#hintPhone"); if (h) setTimeout(() => h.remove(), 2500); }, {passive: true});
   el.addEventListener("touchmove", e => {
-    if (editingNow) { last = pts(e); orb = null; return; }
+    if (editingNow) { last = pts(e); orb = null; two = null; return; }
     const now = pts(e);
     if (!last || now.length !== last.length) { last = now; return; }
     e.preventDefault();
@@ -262,13 +279,18 @@ let editingNow = false;                            // set while the range editor
       orb = null;
       const mid = a => [(a[0][0] + a[1][0]) / 2, (a[0][1] + a[1][1]) / 2], gap = a => Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]);
       const m0 = mid(last), m1 = mid(now), g0 = gap(last), g1 = gap(now);
-      if (Math.abs(m1[0] - m0[0]) + Math.abs(m1[1] - m0[1]) > 0.5) pan(m1[0] - m0[0], m1[1] - m0[1]);
-      if (g0 > 10 && Math.abs(g1 / g0 - 1) > 0.003) dolly((g1 / g0 - 1) * 2.2 * dollyStep(), m1[0], m1[1]);
+      if (!two) two = getCam();                     // kept here during the gesture: reading the camera back each time drifts
+      let moved = false;
+      if (Math.abs(m1[0] - m0[0]) + Math.abs(m1[1] - m0[1]) > 0.5) { two = panViewFrom(two, m1[0] - m0[0], m1[1] - m0[1]); moved = true; }
+      if (g0 > 10 && Math.abs(g1 / g0 - 1) > 0.003) {
+        two = dollyFrom(two, (g1 / g0 - 1) * 2.2 * Math.max(1.5, Math.abs(two.alt - groundAt(two.p))), m1[0], m1[1]); moved = true;
+      }
+      if (moved) setCam(two.p, two.alt, two.b, two.t);
     }
     last = now;
   }, {passive: false});
-  el.addEventListener("touchend", e => { last = pts(e); orb = null; holding = e.touches.length; }, {passive: true});
-  el.addEventListener("touchcancel", () => { last = null; orb = null; holding = 0; }, {passive: true});
+  el.addEventListener("touchend", e => { last = pts(e); orb = null; two = null; holding = e.touches.length; }, {passive: true});
+  el.addEventListener("touchcancel", () => { last = null; orb = null; two = null; holding = 0; }, {passive: true});
 })();
 
 // mouse (PC): left drag = orbit (as above), right drag = move. MapLibre's own dragging is switched off.
@@ -792,17 +814,19 @@ setPlace(S.place.name, S.place.c);
 
 // ------------------------------------------------------------------ favourites: the camera as it is now (position, height, direction, tilt)
 // Kept in this browser (with the other settings) and in the range file, so they go between the phone and the PC too.
-function addFav() {
+// The name is the rough place name from the GSI map labels (lib/gsiname.js: station / town / city); ✎ changes it.
+async function addFav() {
   const c = getCam(), look = lookPoint();
-  const nearPlace = S.place && S.place.name !== "現在地" && G.dist(S.place.c, look) < 500;
-  const def = nearPlace ? S.place.name : `お気に入り ${S.favs.length + 1}`;
-  const name = prompt("お気に入りの名前", def);
-  if (name === null) return;
+  let base = null;
+  try { base = await Promise.race([placeName(look), new Promise(r => setTimeout(() => r(null), 4000))]); } catch {}
+  base = base || `お気に入り ${S.favs.length + 1}`;
+  let name = base;
+  for (let n = 2; S.favs.some(f => f.name === name); n++) name = `${base} ${n}`;
   const r = v => Math.round(v * 1e6) / 1e6;
-  S.favs.unshift({id: "f" + Date.now().toString(36), name: name.trim() || def, cam: {p: [r(c.p[0]), r(c.p[1])], alt: Math.round(c.alt * 10) / 10,
+  S.favs.unshift({id: "f" + Date.now().toString(36), name, cam: {p: [r(c.p[0]), r(c.p[1])], alt: Math.round(c.alt * 10) / 10,
     b: Math.round(c.b * 10) / 10, t: Math.round(c.t * 10) / 10, h: Math.round(heightAbove(c) * 10) / 10}, look: [r(look[0]), r(look[1])], mode: S.mode, saved: new Date().toISOString()});
   save(); renderFavs();
-  toast(`「${S.favs[0].name}」を登録しました`);
+  toast(`「${name}」を登録しました（✎ で名前を変えられます）`, 3200);
 }
 function goFav(f) {
   const c = f.cam;
@@ -949,4 +973,4 @@ document.addEventListener("keydown", e => {
 
 setTool("select");
 renderList(); renderSel(); renderEstimate();
-window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, getCam, dolly, orbitStart, orbitTo, pan, groundAt, map3, loadNear, loadOsm, get detail() { return detail; }, get sel() { return sel; }};
+window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, getCam, dolly, orbitStart, orbitTo, pan, panView, groundAt, map3, loadNear, loadOsm, get detail() { return detail; }, get sel() { return sel; }};
