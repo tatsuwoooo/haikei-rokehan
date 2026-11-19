@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#1f2026">
 <title>背景ロケハン</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="style.css?v=202611200008">
+<link rel="stylesheet" href="style.css?v=202611200022">
 </head>
 <body>
 <header id="bar">
@@ -42,7 +42,7 @@
         <div class="row"><span>近くの木</span><label class="sw"><input type="checkbox" id="treesOn"><i></i></label></div>
         <div class="row"><span>近くの建物を種類別に</span><label class="sw"><input type="checkbox" id="nearOn"><i></i></label></div>
         <div class="row"><span>細かい見た目（窓・影・電柱など）</span><label class="sw"><input type="checkbox" id="lookOn"><i></i></label></div>
-        <div class="row"><span>動かしている間の画質</span><select id="moveQ"><option value="0.5">粗く（軽い）</option><option value="0.7">少し粗く</option><option value="1">そのまま</option></select></div>
+        <div class="row"><span>動かしている間の画質</span><select id="moveQ"><option value="0.15">とても粗く</option><option value="0.25">かなり粗く</option><option value="0.5">粗く</option><option value="1">そのまま</option></select></div>
         <div class="row"><span>近くを描く広さ（半径）</span><select id="nearR"><option value="250">250m</option><option value="400">400m</option><option value="700">700m</option></select></div>
         <div id="nearLegend"></div>
         <div class="row"><span>霞（見える距離の目安）</span><select id="fog"><option value="0.5">500m</option><option value="1">1km</option><option value="2">2km</option><option value="4">4km</option></select></div>
@@ -101,6 +101,6 @@
 </main>
 <div id="toast"></div>
 <script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
-<script type="module" src="app.js?v=202611200008"></script>
+<script type="module" src="app.js?v=202611200022"></script>
 </body>
 </html>

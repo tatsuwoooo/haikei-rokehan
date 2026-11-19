@@ -3,8 +3,8 @@
 // browser showed them.
 //   Positions do not depend on how a road is split into pieces: along each straight stretch, things are placed where
 //   a fixed world grid crosses the road (so two data sources with the same road give the same spots).
-import * as G from "./geo.js?v=202611200008";
-import { photoTrees } from "./phototrees.js?v=202611200008";
+import * as G from "./geo.js?v=202611200022";
+import { photoTrees } from "./phototrees.js?v=202611200022";
 
 // road kinds (OpenMapTiles classes). w = carriageway width (m), walk = sidewalk on each side, rank = importance
 export const ROAD = {

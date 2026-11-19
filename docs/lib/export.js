@@ -3,15 +3,15 @@
 //   mid ranges:    OpenFreeMap vector tiles (building footprints + heights, roads), per 3rd mesh
 //   far ranges:    OpenFreeMap vector tiles, every building as a box (centre, width, depth, angle, height)
 //   terrain:       GSI elevation tiles as they are (dem5a z15 for detail, dem z14 / z13)
-import * as G from "./geo.js?v=202611200008";
-import { decodeTile, polygons } from "./mvt.js?v=202611200008";
-import { makeZip } from "./zip.js?v=202611200008";
-import { GSI_DEM, GSI_DEM5A } from "./gsidem.js?v=202611200008";
-import { gsiTile, gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE } from "./gsibldg.js?v=202611200008";
-import { ringOf, bboxOfShape, LEVELS } from "./shapes.js?v=202611200008";
-import { autoProps, classOfOsm, treesFor } from "./props.js?v=202611200008";
-import { photoMask } from "./phototrees.js?v=202611200008";
-import { omtArea } from "./omttile.js?v=202611200008";
+import * as G from "./geo.js?v=202611200022";
+import { decodeTile, polygons } from "./mvt.js?v=202611200022";
+import { makeZip } from "./zip.js?v=202611200022";
+import { GSI_DEM, GSI_DEM5A } from "./gsidem.js?v=202611200022";
+import { gsiTile, gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE } from "./gsibldg.js?v=202611200022";
+import { ringOf, bboxOfShape, LEVELS } from "./shapes.js?v=202611200022";
+import { autoProps, classOfOsm, treesFor } from "./props.js?v=202611200022";
+import { photoMask } from "./phototrees.js?v=202611200022";
+import { omtArea } from "./omttile.js?v=202611200022";
 
 // Order of tries: the main server gets most of them; the backups are often unreachable, so they get a short limit.
 const OVERPASS_MAIN = "https://overpass-api.de/api/interpreter";

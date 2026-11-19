@@ -1,14 +1,14 @@
 // 背景ロケハン: pick a place in 3D, place ranges (rect / circle / mesh grid), export the data for Blender.
 // One page for phone and PC: the PC layout adds a top-down map next to the 3D view.
-import * as G from "./lib/geo.js?v=202611200008";
-import { registerGsiDem } from "./lib/gsidem.js?v=202611200008";
-import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611200008";
-import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200008";
-import { omtArea } from "./lib/omttile.js?v=202611200008";
-import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200008";
-import { photoMask } from "./lib/phototrees.js?v=202611200008";
-import { placeName } from "./lib/gsiname.js?v=202611200008";
-import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200008";
+import * as G from "./lib/geo.js?v=202611200022";
+import { registerGsiDem } from "./lib/gsidem.js?v=202611200022";
+import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611200022";
+import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200022";
+import { omtArea } from "./lib/omttile.js?v=202611200022";
+import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200022";
+import { photoMask } from "./lib/phototrees.js?v=202611200022";
+import { placeName } from "./lib/gsiname.js?v=202611200022";
+import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200022";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const PC = matchMedia("(min-width: 900px)").matches;
@@ -22,11 +22,12 @@ const DEF = {
   view: {center: [139.7005, 35.6595], zoom: 16.4, bearing: -20, pitch: 58}, mode: "oblique",
   place: {name: "渋谷スクランブル交差点", c: [139.7005, 35.6595]},
   base: "photo", terrain: true, trees: true, fog: 1, eyeH: 60, gridLevel: 4, showGrid: true,
-  outside: "none", outsideR: 2000, shapes: [], favs: [], nextId: 1, near: true, look: true, moveQ: 0.5, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
+  outside: "none", outsideR: 2000, shapes: [], favs: [], nextId: 1, near: true, look: true, moveQ: 0.25, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
 };
 let S;
 try { S = Object.assign(clone(DEF), JSON.parse(localStorage.getItem("rokehan") || "{}")); } catch { S = clone(DEF); }
 if (!S.photoDefault) { S.base = "photo"; S.photoDefault = 1; }      // 2026-11-19: the photo became the default view (once, for saved settings too)
+if (!S.moveQ2) { if (S.moveQ === 0.5) S.moveQ = 0.25; S.moveQ2 = 1; }   // 2026-11-20: much coarser while moving (once, for the old default too)
 let saveT = 0;
 const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem("rokehan", JSON.stringify(S)); } catch {} }, 300); };
 let sel = null, tool = "select";
@@ -168,7 +169,7 @@ function getCam() {
 }
 const heightAbove = c => c.alt - groundAt(c.p);
 // While the camera is moving, the 3D view is drawn with fewer pixels (S.moveQ of the screen's own sharpness on
-// each side, so 0.5 = a quarter of the pixels) and goes back to sharp shortly after it stops. A single jump (a button,
+// each side, so 0.25 = a sixteenth of the pixels) and goes back to sharp shortly after it stops. A single jump (a button,
 // GPS) stays sharp: only moves that come in quick succession count. A finger or mouse button still held keeps it coarse.
 let coarse = false, coarseT = 0, lastCam = 0, holding = 0;
 const sharpRatio = () => window.devicePixelRatio || 1;
@@ -176,7 +177,7 @@ function moving() {
   const now = performance.now(), quick = now - lastCam < 150;
   lastCam = now;
   if (!(S.moveQ < 1)) return;
-  if (!coarse && quick) { coarse = true; map3.setPixelRatio(Math.max(0.5, sharpRatio() * S.moveQ)); }
+  if (!coarse && quick) { coarse = true; map3.setPixelRatio(Math.max(0.15, sharpRatio() * S.moveQ)); }
   if (coarse) { clearTimeout(coarseT); coarseT = setTimeout(sharpen, 200); }
 }
 function sharpen() {
@@ -632,7 +633,7 @@ async function loadNear(force) {
 let detail = null, detailLoading = null;
 function ensureDetail() {
   if (detail) return Promise.resolve(detail);
-  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200008").then(m => m.createDetail(map3, ROAD)).then(d => {
+  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200022").then(m => m.createDetail(map3, ROAD)).then(d => {
     map3.addLayer(d.layer, map3.getLayer("grid") ? "grid" : undefined);
     return (detail = d);
   }).catch(e => { console.warn("detail", e); toast("細かい見た目を読み込めませんでした（通信を確かめてください）"); detailLoading = null; return null; });
@@ -980,7 +981,7 @@ window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, get
 // GitHub Pages lets a browser keep each file for 10 minutes, and phones keep a page open for days. tools/stamp.py puts
 // the same version on every file URL and in version.json; when version.json says a newer one is out, the page reloads
 // into it once (at the start, and when you come back to the page after a minute or more away).
-const APP_VERSION = "202611200008";
+const APP_VERSION = "202611200022";
 let hiddenAt = 0;
 async function checkVersion() {
   if (!APP_VERSION || exporting) return;
