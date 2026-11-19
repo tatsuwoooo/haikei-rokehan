@@ -19,11 +19,12 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;",
 const DEF = {
   view: {center: [139.7005, 35.6595], zoom: 16.4, bearing: -20, pitch: 58}, mode: "oblique",
   place: {name: "渋谷スクランブル交差点", c: [139.7005, 35.6595]},
-  base: "map", terrain: true, trees: true, fog: 1, eyeH: 60, gridLevel: 4, showGrid: true,
+  base: "photo", terrain: true, trees: true, fog: 1, eyeH: 60, gridLevel: 4, showGrid: true,
   outside: "none", outsideR: 2000, shapes: [], nextId: 1, near: true, look: true, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
 };
 let S;
 try { S = Object.assign(clone(DEF), JSON.parse(localStorage.getItem("rokehan") || "{}")); } catch { S = clone(DEF); }
+if (!S.photoDefault) { S.base = "photo"; S.photoDefault = 1; }      // 2026-11-19: the photo became the default view (once, for saved settings too)
 let saveT = 0;
 const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { try { localStorage.setItem("rokehan", JSON.stringify(S)); } catch {} }, 300); };
 let sel = null, tool = "select";
@@ -530,7 +531,7 @@ async function loadNear(force) {
         if (run.length > 1) drawRoads.push({...r, pts: run});
       }
       const trees = !S.trees ? [] : osm.trees.concat(rowTrees(osm.rows)).filter(inR).concat(greenTrees(area.green, inR, PC ? 6000 : 2500));
-      window.__detailStats = d.build({origin: target, R, ground: groundAt, buildings: near, roads: drawRoads, props, trees, green: area.green});
+      window.__detailStats = d.build({origin: target, R, ground: groundAt, buildings: near, roads: drawRoads, props, trees, green: area.green, photo: S.base === "photo"});
       if (map3.getLayer("trees")) map3.setLayoutProperty("trees", "visibility", "none");
     } else {
       if (detail) detail.clear();
@@ -700,11 +701,14 @@ function bindSeg(id, key, attr, after) {
   el.addEventListener("click", e => { const v = e.target.dataset[attr]; if (v == null) return; S[key] = isNaN(+v) ? v : +v; save(); paint(); after && after(); });
   paint();
 }
-bindSeg("#baseseg", "base", "b", () => maps.forEach(m => {
-  m.setLayoutProperty("pale", "visibility", S.base === "map" ? "visible" : "none");
-  m.setLayoutProperty("photo", "visibility", S.base === "photo" ? "visible" : "none");
-  if (m === mapT && m.getLayer("bld")) m.setPaintProperty("bld", "fill-opacity", S.base === "photo" ? 0.35 : 0.9);
-}));
+bindSeg("#baseseg", "base", "b", () => {
+  maps.forEach(m => {
+    m.setLayoutProperty("pale", "visibility", S.base === "map" ? "visible" : "none");
+    m.setLayoutProperty("photo", "visibility", S.base === "photo" ? "visible" : "none");
+    if (m === mapT && m.getLayer("bld")) m.setPaintProperty("bld", "fill-opacity", S.base === "photo" ? 0.35 : 0.9);
+  });
+  loadNear(true);                                  // over the photo, the detailed view leaves out its own ground and roads
+});
 bindSeg("#gridseg", "gridLevel", "g", renderGrid);
 bindSeg("#outseg", "outside", "o", () => { $("#outRrow").style.display = S.outside === "far" ? "" : "none"; renderEstimate(); });
 $("#outRrow").style.display = S.outside === "far" ? "" : "none";

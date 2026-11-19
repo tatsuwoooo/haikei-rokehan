@@ -138,7 +138,7 @@ export async function createDetail(map, ROAD) {
   function setOverlay(lines) {
     ovlLines = lines || [];
     if (ovl) { ovl.geometry.dispose(); scene.remove(ovl); ovl = null; }
-    if (!root || !last) return;
+    if (!root || !last || last.photo) return;           // over the photo, the map's own outlines show
     const O = last.origin, R = last.R + 30, L = p => { const d = G.delta(O, p); return [d[0], -d[1]]; };
     const gz = q => last.ground(G.offset(O, q[0], -q[1]));
     const buf = new Buf();
@@ -254,6 +254,8 @@ export async function createDetail(map, ROAD) {
     for (const k of Object.keys(walls)) { const me = walls[k].mesh(mat.wall[k]); if (me) root.add(me); }
     { const me = roofs.mesh(mat.plain); if (me) root.add(me); }
 
+    // ---- roads and ground: only over the plain map. Over the aerial photo, the photo shows the real roads and ground.
+    if (!data.photo) {
     // ---- roads: sidewalk band, carriageway, white lines
     const road = new Buf(), paint = new Buf(), yellow = new Buf();
     const asphalt = col("#6f7276"), walkC = col("#bdb8ae"), trackC = col("#9b907c"), pathC = col("#c2b9a8");
@@ -352,6 +354,7 @@ export async function createDetail(map, ROAD) {
           GC[kindAt([x0 + step / 2, y0 + step / 2])]);
       }
       const me = buf.mesh(mat.ground, false); if (me) { me.castShadow = false; root.add(me); }
+    }
     }
 
     // ---- instanced things: trees, poles, lamps, signals
