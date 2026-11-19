@@ -4,6 +4,7 @@ import * as G from "./lib/geo.js";
 import { registerGsiDem } from "./lib/gsidem.js";
 import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js";
 import { exportData, OMT_TILEJSON } from "./lib/export.js";
+import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const PC = matchMedia("(min-width: 900px)").matches;
@@ -17,7 +18,7 @@ const DEF = {
   view: {center: [139.7005, 35.6595], zoom: 16.4, bearing: -20, pitch: 58}, mode: "oblique",
   place: {name: "渋谷スクランブル交差点", c: [139.7005, 35.6595]},
   base: "map", terrain: true, trees: true, fog: 1, eyeH: 60, gridLevel: 4, showGrid: true,
-  outside: "none", outsideR: 2000, shapes: [], nextId: 1,
+  outside: "none", outsideR: 2000, shapes: [], nextId: 1, near: true, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
 };
 let S;
 try { S = Object.assign(clone(DEF), JSON.parse(localStorage.getItem("rokehan") || "{}")); } catch { S = clone(DEF); }
@@ -93,7 +94,10 @@ function applyTerrain() { try { map3.setTerrain(S.terrain ? {source: "dem", exag
 
 const EMPTY = {type: "FeatureCollection", features: []};
 function addAppLayers(m, role) {
-  for (const id of ["grid", "shapes", "handles", "draft", "trees", "cam"]) m.addSource(id, {type: "geojson", data: EMPTY});
+  for (const id of ["grid", "shapes", "handles", "draft", "trees", "cam", "near"]) m.addSource(id, {type: "geojson", data: EMPTY});
+  if (role === "3d") m.addLayer({id: "near", type: "fill-extrusion", source: "near", minzoom: 13,
+    paint: {"fill-extrusion-color": ["get", "color"], "fill-extrusion-height": ["get", "top"], "fill-extrusion-base": ["get", "base"],
+            "fill-extrusion-opacity": 0.97, "fill-extrusion-vertical-gradient": true}});
   if (role === "3d") m.addLayer({id: "trees", type: "fill-extrusion", source: "trees", minzoom: 14,
     paint: {"fill-extrusion-color": "#5f8f57", "fill-extrusion-height": 9, "fill-extrusion-base": 2.2, "fill-extrusion-opacity": 0.95}}, m.getLayer("bld") ? "bld" : undefined);
   m.addLayer({id: "grid", type: "line", source: "grid", paint: {"line-color": "rgba(40,40,70,.55)", "line-width": 1, "line-dasharray": [3, 3]}});
@@ -131,6 +135,7 @@ function ready() {
   });
   map3.on("move", updateCam);
   map3.on("idle", countNear);
+  map3.on("idle", () => loadNear());
   if (mapT) {
     mapT.on("moveend", renderGrid);
     map3.on("moveend", () => {          // keep the top map roughly on the 3D view
@@ -429,6 +434,73 @@ function updateCam() {
     {type: "Feature", properties: {}, geometry: {type: "Point", coordinates: cam}}]});
 }
 
+// ------------------------------------------------------------------ buildings near the view, by kind (GSI)
+// Inside a circle around where you look, the plain boxes are replaced by buildings drawn by kind (国土地理院の建物の種類):
+// houses get a dark roof, concrete buildings and high-rises get floor lines. Heights come from the map data where it
+// has a real value (OpenFreeMap gives 5 m when it does not know), otherwise a guess from the kind and the footprint.
+const NEAR_STYLE = {
+  house: {wall: "#efe5d3", roof: "#5d5452", roofT: 1.1},
+  building: {wall: "#cfd4dc", roof: "#a3a9b4", roofT: 0.6, line: "#7f8796"},
+  tower: {wall: "#b4c0d2", roof: "#8995a8", roofT: 0.8, line: "#6c788c"},
+  shed: {wall: "#d6d6d6", roof: "#8d939b", roofT: 0.3},
+};
+const BLD_FILTER = ["!=", ["get", "hide_3d"], true];
+let nearAt = null, nearBusy = false, nearAgain = false;
+const feat = (rings, base, top, color) => ({type: "Feature", properties: {base, top, color}, geometry: {type: "Polygon", coordinates: rings}});
+function clearNear() {
+  nearAt = null;
+  if (map3.getSource("near")) map3.getSource("near").setData(EMPTY);
+  if (map3.getLayer("bld")) map3.setFilter("bld", BLD_FILTER);
+  renderNearLegend(null);
+}
+function renderNearLegend(counts) {
+  $("#nearLegend").innerHTML = Object.entries(NEAR_STYLE).map(([k, v]) =>
+    `<div class="lg"><i style="background:${v.wall};border-top:4px solid ${v.roof}"></i><span>${KIND_LABEL[k]}</span><b>${counts ? counts[k] || 0 : "—"}</b></div>`).join("");
+}
+async function loadNear(force) {
+  if (!S.near || !map3.getSource("near")) return;
+  const c = getCam(), target = lookPoint(), R = S.nearR;
+  if (heightAbove(c) > 2500 || map3.getZoom() < 13.5) { if (nearAt) clearNear(); return; }
+  if (!force && nearAt && G.dist(nearAt, target) < R * 0.35) return;
+  if (nearBusy) { nearAgain = true; return; }
+  nearBusy = true;
+  try {
+    const bb = [...G.offset(target, -R - 60, -R - 60), ...G.offset(target, R + 60, R + 60)];
+    const list = await gsiBuildings(bb);
+    if (!S.near) return;
+    // heights from the map data, matched by position
+    const omt = [];
+    if (map3.getSource("omt")) for (const f of map3.querySourceFeatures("omt", {sourceLayer: "building"})) {
+      const g = f.geometry, polys = g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : [];
+      for (const p of polys) omt.push({rings: p, h: f.properties.render_height, minH: f.properties.render_min_height || 0});
+    }
+    const omtAt = makeLookup(omt);
+    const fs = [], counts = {};
+    for (const b of list) {
+      const outer = b.rings[0], cen = G.ringCentroid(outer);
+      if (G.dist(target, cen) > R && !outer.some(p => G.dist(target, p) < R)) continue;
+      const kind = KIND_OF_CODE[b.code] || "building", st = NEAR_STYLE[kind];
+      const area = G.ringArea(outer.map(p => G.delta(outer[0], p)));
+      const o = omtAt(cen);
+      const h = o && o.h > 0 && o.h !== 5 ? o.h : guessHeight(kind, area), base = o ? o.minH : 0;
+      counts[kind] = (counts[kind] || 0) + 1;
+      if (kind === "shed") { fs.push(feat(b.rings, base + 2.4, base + 2.4 + st.roofT, st.roof)); continue; }
+      fs.push(feat(b.rings, base, base + h, st.wall));
+      fs.push(feat(b.rings, base + h, base + h + st.roofT, st.roof));
+      if (st.line) {                       // floor lines every 3.4 m, a little outside the wall (about 0.25 m)
+        const k = 1 + 0.25 / Math.max(4, Math.sqrt(area));
+        const ring = outer.map(p => [cen[0] + (p[0] - cen[0]) * k, cen[1] + (p[1] - cen[1]) * k]);
+        for (let z = 3.4, n = 0; z < h - 1.5 && n < 45; z += 3.4, n++) fs.push(feat([ring], base + z - 0.13, base + z + 0.13, st.line));
+      }
+    }
+    map3.getSource("near").setData({type: "FeatureCollection", features: fs});
+    if (map3.getLayer("bld")) map3.setFilter("bld", ["all", BLD_FILTER, [">", ["distance", {type: "Point", coordinates: target}], R]]);
+    nearAt = target;
+    renderNearLegend(counts);
+  } catch (e) { console.warn("near buildings", e); }
+  finally { nearBusy = false; if (nearAgain) { nearAgain = false; setTimeout(() => loadNear(), 50); } }
+}
+
 // ------------------------------------------------------------------ trees near the view (3D only, small Overpass query, cached)
 const treeCells = new Map();
 let treeBusy = false, treeLast = 0;
@@ -551,6 +623,10 @@ const bindCheck = (id, key, after) => { $(id).checked = !!S[key]; $(id).addEvent
 bindCheck("#terrainOn", "terrain", applyTerrain);
 bindCheck("#treesOn", "trees", () => { if (!S.trees) map3.getSource("trees").setData(EMPTY); else loadTrees(); });
 bindCheck("#gridOn", "showGrid", renderGrid);
+bindCheck("#nearOn", "near", () => { if (S.near) loadNear(true); else clearNear(); });
+$("#nearR").value = String(S.nearR);
+$("#nearR").addEventListener("change", e => { S.nearR = +e.target.value; save(); loadNear(true); });
+renderNearLegend(null);
 $("#fog").value = String(S.fog); $("#fog").addEventListener("change", e => { S.fog = +e.target.value; save(); applySky(); });
 $("#outR").value = String(S.outsideR); $("#outR").addEventListener("change", e => { S.outsideR = +e.target.value; save(); renderEstimate(); });
 
@@ -686,4 +762,4 @@ document.addEventListener("keydown", e => {
 
 setTool("select");
 renderList(); renderSel(); renderEstimate();
-window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, getCam, dolly, turn, pan, groundAt, get sel() { return sel; }};
+window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, getCam, dolly, turn, pan, groundAt, map3, loadNear, get sel() { return sel; }};

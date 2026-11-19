@@ -7,6 +7,7 @@ import * as G from "./geo.js";
 import { decodeTile, polygons } from "./mvt.js";
 import { makeZip } from "./zip.js";
 import { GSI_DEM, GSI_DEM5A } from "./gsidem.js";
+import { gsiTile, makeLookup, guessHeight, KIND_OF_CODE } from "./gsibldg.js";
 import { ringOf, bboxOfShape, LEVELS } from "./shapes.js";
 
 // Order of tries: the main server gets most of them; the backups are often unreachable, so they get a short limit.
@@ -248,7 +249,7 @@ export async function exportData({shapes, settings, place, omtTiles, onProgress 
           sec.buildings.push({id: el.type[0] + el.id, fp: lr.slice(0, -1), holes: holes.map(hh => hh.slice(0, -1)), h: r2(h), hSrc: src,
             minH: num(t.min_height) || (num(t["building:min_level"]) || 0) * 3.2, levels: num(t["building:levels"]), use: t.building,
             roof: t["roof:shape"] || null, colour: t["building:colour"] || null, material: t["building:material"] || null, name: t.name || null,
-            c: c.map(r2), area: Math.round(area)});
+            c: c.map(r2), area: Math.round(area), _ll: cll});
           nb++;
         }
         continue;
@@ -299,7 +300,7 @@ export async function exportData({shapes, settings, place, omtTiles, onProgress 
           if (rank !== 2 && rank !== 1) continue;
           const sec = secFor(cll, rank, rg); if (!sec) continue;
           const lr = LR(ringLL), h = r2(f.props.render_height || 6), minH = f.props.render_min_height || 0;
-          if (rank === 2) { sec.buildings.push({fp: lr.slice(0, -1), h, minH}); nmid++; }
+          if (rank === 2) { sec.buildings.push({fp: lr.slice(0, -1), h, hSrc: f.props.render_height && f.props.render_height !== 5 ? "map" : "default", minH, _ll: cll, _area: G.ringArea(lr)}); nmid++; }
           else { const ob = G.orientedBox(lr.slice(0, -1)); sec.buildings.push({box: ob.map(r2), h}); nfar++; }
         }
       }
@@ -345,6 +346,33 @@ export async function exportData({shapes, settings, place, omtTiles, onProgress 
     td++; onProgress(`地形を取得中（${td}/${tlist.length}）`, 0.8 + 0.12 * td / tlist.length);
     if (res.ok) files.push({name, data: new Uint8Array(await res.arrayBuffer())}); else t.missing = true;
   });
+
+  // ---- building kinds from GSI (普通建物 / 堅ろう建物 / 高層建物 / 無壁舎), for detail and mid sections
+  const kindSecs = [...sections.values()].filter(s => (s.level === "detail" || s.level === "mid") && s.buildings.length);
+  if (kindSecs.length) {
+    const tiles = G.tilesFor(G.bboxOf(kindSecs.flatMap(s => [[s.bounds[0], s.bounds[1]], [s.bounds[2], s.bounds[3]]])), 16);
+    if (tiles.length > 400) log(`建物の種類: 範囲が広すぎるので省きました（地図タイル ${tiles.length} 枚）`);
+    else {
+      let td = 0;
+      const lists = [];
+      await pool(tiles, 6, async ([z, x, y]) => {
+        lists.push(await gsiTile(z, x, y));
+        td++; onProgress(`建物の種類を取得中（${td}/${tiles.length}）`, 0.92 + 0.01 * td / tiles.length);
+      });
+      const at = makeLookup(lists.flat());
+      let hit = 0, all = 0;
+      for (const sec of kindSecs) for (const b of sec.buildings) {
+        all++;
+        const g = at(b._ll); if (!g) continue;
+        hit++; b.gsi = g.code; b.kind = KIND_OF_CODE[g.code] || null;
+        // a better height guess when the data had none
+        if (b.kind && (b.hSrc === "guess" && (!b.use || b.use === "yes") || b.hSrc === "default"))
+          { b.h = r2(guessHeight(b.kind, b.area || b._area || 100)); b.hSrc = "kind"; }
+      }
+      log(`建物の種類: ${all} 棟のうち ${hit} 棟が分かりました（国土地理院）`);
+    }
+  }
+  for (const s of sections.values()) for (const b of s.buildings) { delete b._ll; delete b._area; }
 
   // ---- pack
   onProgress("ファイルにまとめています", 0.93);

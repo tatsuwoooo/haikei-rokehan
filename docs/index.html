@@ -36,9 +36,12 @@
         <div class="row"><span>地図</span><div class="seg sm" id="baseseg"><b data-b="map">地図</b><b data-b="photo">写真</b></div></div>
         <div class="row"><span>地形の起伏</span><label class="sw"><input type="checkbox" id="terrainOn"><i></i></label></div>
         <div class="row"><span>近くの木</span><label class="sw"><input type="checkbox" id="treesOn"><i></i></label></div>
+        <div class="row"><span>近くの建物を種類別に</span><label class="sw"><input type="checkbox" id="nearOn"><i></i></label></div>
+        <div class="row"><span>種類別に描く広さ（半径）</span><select id="nearR"><option value="250">250m</option><option value="400">400m</option><option value="700">700m</option></select></div>
+        <div id="nearLegend"></div>
         <div class="row"><span>霞（見える距離の目安）</span><select id="fog"><option value="0.5">500m</option><option value="1">1km</option><option value="2">2km</option><option value="4">4km</option></select></div>
         <div class="row phone-only"><span>目線の高さ</span><span><input id="eyehP" type="number" min="1" max="500" step="5" style="width:70px"> m</span></div>
-        <p class="note">3D は場所を決めるための簡易表示です。建物の高さは地図データの値、無いものは推測です。</p>
+        <p class="note">3D は場所を決めるための簡易表示です。建物の高さは地図データの値、無いものは推測です。建物の種類は国土地理院のデータ（普通建物・堅ろう建物・高層建物）で、見ている場所の近くだけ色分けします。</p>
       </section>
       <section data-p="ranges">
         <div class="cap">道具</div>
@@ -67,7 +70,7 @@
         <div class="cap">範囲のファイル</div>
         <div class="row2"><button class="ib wide" id="saveBtn">範囲を保存</button><button class="ib wide" id="openBtn">📂 範囲を開く</button></div>
         <input type="file" id="openFile" accept=".json,application/json" hidden>
-        <p class="attr">© OpenStreetMap contributors / OpenFreeMap © OpenMapTiles / 国土地理院（地図・写真・標高）</p>
+        <p class="attr">© OpenStreetMap contributors / OpenFreeMap © OpenMapTiles / 国土地理院（地図・写真・標高・建物の種類）</p>
       </section>
     </div>
   </aside>

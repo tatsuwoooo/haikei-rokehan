@@ -43,8 +43,9 @@ rokehan_<場所>_<日時>.zip
 共通: `{id, level, mesh, buildings, roads, rails, areas, barriers, power, points}`
 
 ### 詳細（OSM）
-- `buildings[]`: `{id, fp: [[e,n],...] 外周（閉じ点なし）, holes: [[...]], h: 高さ m, hSrc: "height"|"levels"|"guess", minH, levels, use: building タグ, roof: roof:shape, colour, material, name, c: 中心, area: m²}`
-  - `hSrc = "guess"` は高さが地図に無く、用途と面積から推測した値。
+- `buildings[]`: `{id, fp: [[e,n],...] 外周（閉じ点なし）, holes: [[...]], h: 高さ m, hSrc: "height"|"levels"|"guess"|"kind", minH, levels, use: building タグ, roof: roof:shape, colour, material, name, c: 中心, area: m², kind, gsi}`
+  - `hSrc = "guess"` は高さが地図に無く、用途と面積から推測した値。`"kind"` は、用途も分からず、国土地理院の建物の種類と面積から推測した値。
+  - `kind`: 国土地理院の建物の種類（`"house"` 普通建物＝民家・小さな建物、`"building"` 堅ろう建物＝ビル・マンション、`"tower"` 高層建物、`"shed"` 無壁舎＝屋根だけの車庫など）。`gsi` はその元の番号（3101 / 3102 / 3103 / 3111 / 3112）。中心の位置で国土地理院の建物と照らし合わせ、見つからない建物には付かない。
 - `roads[]`: `{id, kind: highway の値, pts: [[e,n],...], tags: {name, lanes, width, oneway, layer, bridge, tunnel, sidewalk, surface, ...}}`
 - `rails[]`: `{id, kind: railway の値, pts, tags}`
 - `areas[]`: `{id, kind: water|park|grass|forest|parking|pitch|..., rings: [[[e,n],...]]}`、川などの線は `{kind: "waterway_river", line: [...]}`
@@ -53,7 +54,7 @@ rokehan_<場所>_<日時>.zip
 - `points[]`: `{kind, p: [e,n], tags, id}`。kind は tree / street_lamp / traffic_signals / crossing / bus_stop / sign / utility_pole / power_tower / street_cabinet / fire_hydrant / vending_machine / bench / post_box / telephone / bicycle_parking / waste_basket / toilets
 
 ### 中景（ベクトルタイル）
-- `buildings[]`: `{fp: [[e,n],...], h, minH}`（用途などのタグは無い）
+- `buildings[]`: `{fp: [[e,n],...], h, hSrc: "map"|"default"|"kind", minH, kind, gsi}`（用途などのタグは無い。`kind`・`gsi` は詳細と同じ。地図に高さが無いときは種類と面積から推測して `hSrc = "kind"`）
 - `roads[]`: `{kind: class（motorway, primary, minor, service, rail, path …）, sub, brunnel: bridge|tunnel|null, layer, pts}`
 
 ### 板ポリ（ベクトルタイル）

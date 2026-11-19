@@ -122,3 +122,7 @@ body.phone #walk{bottom:auto;top:56px}
 #hud button[hidden]{display:none}
 body.phone #hud{top:auto;bottom:96px;right:10px}
 body.phone #hintPhone{bottom:132px;font-size:11px}
+#nearLegend{margin:2px 0 6px}
+#nearLegend .lg{display:flex;align-items:center;gap:8px;padding:3px 0;color:var(--mu);font-size:12px}
+#nearLegend .lg i{width:16px;height:13px;border-radius:2px;flex:0 0 16px;box-sizing:border-box}
+#nearLegend .lg b{margin-left:auto;color:var(--tx);font-weight:600}
