@@ -70,9 +70,14 @@ async function loadOmt() {
 const OMT = await loadOmt();
 if (!OMT) setTimeout(() => toast("建物の地図データ（OpenFreeMap）が読み込めませんでした。少しして開き直してください。", 6000), 500);
 
-const map3 = new maplibregl.Map({container: "map3d", style: style("3d"), center: S.view.center, zoom: S.view.zoom,
-  bearing: S.view.bearing, pitch: S.mode === "top" ? 0 : S.view.pitch, maxPitch: 85, attributionControl: {compact: true}});
-const mapT = PC ? new maplibregl.Map({container: "maptop", style: style("top"), center: S.view.center, zoom: S.view.zoom - 1.2,
+// The 3D view is driven by our own free camera (see "camera" below): no zoom or pitch limit worth noticing,
+// the centre may float above the ground, and the camera may go down to the ground or below it.
+const map3 = new maplibregl.Map({container: "map3d", style: style("3d"), center: S.view.center, zoom: Math.min(S.view.zoom, 23),
+  bearing: S.view.bearing, pitch: Math.min(S.view.pitch, 85), maxPitch: 150, maxZoom: 24, centerClampedToGround: false,
+  attributionControl: {compact: true}});
+if (!PC) { map3.dragPan.disable(); map3.touchZoomRotate.disable(); map3.touchPitch.disable(); map3.doubleClickZoom.disable(); }
+map3.scrollZoom.disable();                        // the wheel moves the camera itself (no end to zooming in)
+const mapT = PC ? new maplibregl.Map({container: "maptop", style: style("top"), center: S.view.center, zoom: Math.max(13, Math.min(16.5, S.view.zoom - 1.2)),
   maxPitch: 0, dragRotate: false, pitchWithRotate: false, touchPitch: false, attributionControl: false}) : null;
 const maps = PC ? [map3, mapT] : [map3];
 window.__maps = maps;
@@ -117,8 +122,13 @@ if (mapT) mapT.on("load", () => { safe("layers", () => addAppLayers(mapT, "top")
 map3.on("error", e => console.warn("map error", e && e.error && e.error.message));
 
 function ready() {
-  renderShapes(); renderGrid(); updateCam(); setMode(S.mode, true);
-  map3.on("moveend", () => { S.view = {center: map3.getCenter().toArray(), zoom: map3.getZoom(), bearing: map3.getBearing(), pitch: map3.getPitch()}; save(); renderGrid(); loadTrees(); });
+  if (S.cam) safe("restore camera", () => setCam(S.cam.p, S.cam.alt, S.cam.b, S.cam.t));
+  renderShapes(); renderGrid(); updateCam(); updateHud(); setMode(S.mode, true);
+  map3.on("moveend", () => {
+    S.view = {center: map3.getCenter().toArray(), zoom: map3.getZoom(), bearing: map3.getBearing(), pitch: map3.getPitch()};
+    const c = getCam(); S.cam = {p: c.p, alt: c.alt, b: c.b, t: c.t};
+    save(); renderGrid(); loadTrees();
+  });
   map3.on("move", updateCam);
   map3.on("idle", countNear);
   if (mapT) {
@@ -133,51 +143,146 @@ function ready() {
   loadTrees();
 }
 
-// ------------------------------------------------------------------ view modes and walking
-let eyeD = 600;                                    // how far ahead the eye looks (m)
-function eyeCamera(cam, bearing, H) {               // put the camera at cam (ground point) H m up, looking along bearing
-  const D = Math.min(11 * H, Math.max(180, 6 * H));
-  eyeD = D;
-  const b = bearing * Math.PI / 180, target = G.offset(cam, D * Math.sin(b), D * Math.cos(b));
-  const L = Math.hypot(D, H), pitch = Math.min(85, Math.atan2(D, H) * 180 / Math.PI);
-  const fov = (map3.transform && map3.transform.fov) || 36.87;
-  const ctc = 0.5 * map3.getCanvas().clientHeight / Math.tan(fov * Math.PI / 360);
-  const mpp = L / ctc, zoom = Math.log2(40075016.686 * Math.cos(target[1] * Math.PI / 180) / (512 * mpp));
-  map3.jumpTo({center: target, zoom: Math.min(22, zoom), pitch, bearing});
+// ------------------------------------------------------------------ camera
+// The camera is a point (lon, lat, altitude above sea level in m) with a heading (b, degrees) and a tilt
+// (t, degrees: 0 = straight down, 90 = level, more = looking up). MapLibre still needs a "centre": we put it on the
+// line of sight, on the ground when the camera looks down at it, otherwise a short distance ahead in the air.
+const RAD = Math.PI / 180;
+const ORBIT_ABOVE = 30;                           // higher than this above the ground, one finger orbits around the centre
+let wanted = null;                                // the camera we asked for: kept even if MapLibre would lift it out of the ground
+map3.transformCameraUpdate = () => wanted || {};
+const groundAt = p => { if (!S.terrain) return 0; try { return map3.queryTerrainElevation(p) || 0; } catch { return 0; } };
+function getCam() {
+  const tr = map3.transform, ll = tr.getCameraLngLat();
+  return {p: [ll.lng, ll.lat], alt: tr.getCameraAltitude(), b: map3.getBearing(), t: map3.getPitch()};
 }
-function eyePos() {                                 // the ground point under the camera in eye mode
-  const c = map3.getCenter().toArray(), b = map3.getBearing() * Math.PI / 180;
-  return G.offset(c, -eyeD * Math.sin(b), -eyeD * Math.cos(b));
+const heightAbove = c => c.alt - groundAt(c.p);
+function setCam(p, alt, b, t, D) {
+  t = Math.max(0, Math.min(150, t));
+  const ground = groundAt(p), h = alt - ground;
+  if (D == null) D = (t < 84 && h > 0) ? Math.min(h / Math.cos(t * RAD), 4000) : Math.max(12, Math.min(Math.abs(h) * 1.5, 400));
+  const ctc = map3.transform.cameraToCenterDistance || map3.getCanvas().clientHeight * 1.5;
+  const zoomOf = (d, lat) => Math.log2(ctc * 40075016.686 * Math.cos(lat * RAD) / (512 * d));
+  D = Math.max(D, 1.02 * 40075016.686 * Math.cos(p[1] * RAD) * ctc / (512 * 2 ** 24));   // MapLibre's zoom stops at 24
+  const horiz = D * Math.sin(t * RAD);
+  const center = G.offset(p, horiz * Math.sin(b * RAD), horiz * Math.cos(b * RAD));
+  wanted = {center: new maplibregl.LngLat(center[0], center[1]), zoom: Math.min(24, zoomOf(D, center[1])), pitch: t, bearing: b,
+            elevation: alt - D * Math.cos(t * RAD)};
+  try { map3.jumpTo(wanted); } finally { wanted = null; }
+}
+// Move the camera along the line through a screen point (forward when dist > 0). Never stops: you can fly through
+// buildings and the ground.
+function dolly(dist, sx, sy) {
+  const c = getCam(), cv = map3.getCanvas(), ctc = map3.transform.cameraToCenterDistance || cv.clientHeight * 1.5;
+  const yaw = sx == null ? 0 : Math.atan((sx - cv.clientWidth / 2) / ctc) / RAD;
+  const tilt = sy == null ? 0 : Math.atan((sy - cv.clientHeight / 2) / ctc) / RAD;
+  const b = c.b + yaw, t = c.t - tilt;
+  const horiz = dist * Math.sin(t * RAD), up = -dist * Math.cos(t * RAD);
+  setCam(G.offset(c.p, horiz * Math.sin(b * RAD), horiz * Math.cos(b * RAD)), c.alt + up, c.b, c.t);
+}
+const dollyStep = () => Math.max(1.5, Math.abs(heightAbove(getCam())));     // slower close to the ground, never zero
+// Turn the view: high up, orbit around the centre; close to the ground, look around from where the camera is.
+function turn(db, dt) {
+  const c = getCam();
+  if (heightAbove(c) > ORBIT_ABOVE && c.t < 89) {
+    map3.jumpTo({bearing: c.b + db, pitch: Math.max(0, Math.min(88, c.t + dt))});
+  } else setCam(c.p, c.alt, c.b + db, Math.max(0, Math.min(150, c.t + dt)));
+}
+function pan(dxPx, dyPx) {                         // move the camera level with the ground, like dragging the map
+  const c = getCam(), cv = map3.getCanvas(), ctc = map3.transform.cameraToCenterDistance || cv.clientHeight * 1.5;
+  const h = Math.max(2, Math.abs(heightAbove(c)));
+  const D = c.t < 84 ? h / Math.max(0.15, Math.cos(c.t * RAD)) : h * 6;
+  const mpp = D / ctc, k = 1 / Math.max(0.35, Math.cos(Math.min(c.t, 80) * RAD));
+  const right = -dxPx * mpp, fwd = dyPx * mpp * k;
+  const b = c.b * RAD;
+  const p = G.offset(c.p, right * Math.cos(b) + fwd * Math.sin(b), -right * Math.sin(b) + fwd * Math.cos(b));
+  setCam(p, c.alt, c.b, c.t);
+}
+
+// mouse wheel (PC): fly toward the point under the cursor
+map3.getCanvasContainer().addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = map3.getCanvas().getBoundingClientRect();
+  const d = Math.max(-300, Math.min(300, e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY));
+  dolly(-d / 100 * 0.18 * dollyStep() * (e.shiftKey ? 4 : 1), e.clientX - r.left, e.clientY - r.top);
+}, {passive: false});
+
+// touch (phone): one finger = turn / tilt, two fingers = move (slide) and zoom (pinch)
+let editingNow = false;                            // set while the range editor owns the finger
+(function touchCamera() {
+  if (PC) return;
+  const el = map3.getCanvasContainer();
+  let last = null;
+  const pts = e => [...e.touches].map(t => { const r = el.getBoundingClientRect(); return [t.clientX - r.left, t.clientY - r.top]; });
+  el.addEventListener("touchstart", e => { last = pts(e); const h = $("#hintPhone"); if (h) setTimeout(() => h.remove(), 2500); }, {passive: true});
+  el.addEventListener("touchmove", e => {
+    if (editingNow) { last = pts(e); return; }
+    const now = pts(e);
+    if (!last || now.length !== last.length) { last = now; return; }
+    e.preventDefault();
+    if (now.length === 1) {
+      turn(-(now[0][0] - last[0][0]) * 0.28, (now[0][1] - last[0][1]) * 0.22);   // the view follows the finger, like Street View
+    } else if (now.length >= 2) {
+      const mid = a => [(a[0][0] + a[1][0]) / 2, (a[0][1] + a[1][1]) / 2], gap = a => Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]);
+      const m0 = mid(last), m1 = mid(now), g0 = gap(last), g1 = gap(now);
+      if (Math.abs(m1[0] - m0[0]) + Math.abs(m1[1] - m0[1]) > 0.5) pan(m1[0] - m0[0], m1[1] - m0[1]);
+      if (g0 > 10 && Math.abs(g1 / g0 - 1) > 0.003) dolly((g1 / g0 - 1) * 2.2 * dollyStep(), m1[0], m1[1]);
+    }
+    last = now;
+  }, {passive: false});
+  el.addEventListener("touchend", e => { last = pts(e); }, {passive: true});
+})();
+
+// height / tilt readout and "back above the ground"
+function updateHud() {
+  const c = getCam(), h = heightAbove(c);
+  $("#hudText").textContent = `高さ ${Math.abs(h) < 10 ? h.toFixed(1) : Math.round(h)}m・傾き ${Math.round(c.t)}°`;
+  $("#toGround").hidden = h > 0.5;
+}
+map3.on("move", updateHud);
+$("#toGround").addEventListener("click", () => { const c = getCam(); setCam(c.p, groundAt(c.p) + S.eyeH, c.b, 80); });
+
+// presets: 真上 / 見下ろし / 目線 (where you look stays where it is)
+function lookPoint() {
+  const c = getCam();
+  if (c.t < 84 && heightAbove(c) > 0) return map3.getCenter().toArray();
+  return c.p;
 }
 function setMode(m, initial) {
-  const prev = S.mode;
   S.mode = m; save();
   $$("#viewseg b").forEach(b => b.classList.toggle("on", b.dataset.v === m));
-  $("#walk").hidden = m !== "eye";
-  if (initial && m !== "eye") return;
-  if (m === "top") map3.easeTo({pitch: 0, duration: 500});
-  else if (m === "oblique") map3.easeTo({pitch: 58, zoom: Math.min(Math.max(map3.getZoom(), 15.4), 17.5), duration: 600, ...(prev === "eye" ? {center: eyePos()} : {})});
-  else eyeCamera(prev === "eye" ? eyePos() : map3.getCenter().toArray(), map3.getBearing(), S.eyeH);
+  $("#walk").hidden = PC || m !== "eye";          // PC walks with the keyboard
+  if (initial) return;
+  const c = getCam(), target = lookPoint(), g = groundAt(target);
+  const place = (H, t) => {             // camera H m above the target's ground, tilted t, looking at the target
+    const D = H / Math.cos(t * RAD), horiz = D * Math.sin(t * RAD);
+    setCam(G.offset(target, -horiz * Math.sin(c.b * RAD), -horiz * Math.cos(c.b * RAD)), g + H, c.b, t, D);
+  };
+  if (m === "top") place(Math.max(250, Math.min(2500, heightAbove(c))), 0);
+  else if (m === "oblique") place(320, 58);
+  else setCam(c.t < 84 && heightAbove(c) > 0 ? target : c.p, g + S.eyeH, c.b, 80);
 }
 $("#viewseg").addEventListener("click", e => { const v = e.target.dataset.v; if (v) setMode(v); });
 function walk(cmd, fast) {
-  if (S.mode !== "eye") setMode("eye");
-  const step = (fast ? 40 : 10) * Math.max(1, S.eyeH / 60);
-  let p = eyePos(), b = map3.getBearing();
-  const r = b * Math.PI / 180;
+  const c = getCam(), step = (fast ? 4 : 1) * Math.max(3, Math.abs(heightAbove(c)) * 0.15);
+  const r = c.b * RAD;
+  let p = c.p, alt = c.alt, b = c.b;
   if (cmd === "fwd") p = G.offset(p, step * Math.sin(r), step * Math.cos(r));
   if (cmd === "back") p = G.offset(p, -step * Math.sin(r), -step * Math.cos(r));
   if (cmd === "left") p = G.offset(p, -step * Math.cos(r), step * Math.sin(r));
   if (cmd === "right") p = G.offset(p, step * Math.cos(r), -step * Math.sin(r));
-  if (cmd === "turnL") b -= fast ? 30 : 10;
-  if (cmd === "turnR") b += fast ? 30 : 10;
-  if (cmd === "up") setEyeH(S.eyeH + (fast ? 50 : 10));
-  if (cmd === "down") setEyeH(Math.max(1.6, S.eyeH - (fast ? 50 : 10)));
-  eyeCamera(p, b, S.eyeH);
+  if (cmd === "turnL") b -= fast ? 30 : 8;
+  if (cmd === "turnR") b += fast ? 30 : 8;
+  if (cmd === "up") alt += step;
+  if (cmd === "down") alt -= step;
+  setCam(p, alt, b, c.t);
 }
 function setEyeH(h) { S.eyeH = Math.round(h * 10) / 10; $("#eyeh").value = S.eyeH; $("#eyehP").value = S.eyeH; save(); }
 setEyeH(S.eyeH);
-for (const id of ["#eyeh", "#eyehP"]) $(id).addEventListener("change", e => { setEyeH(Math.max(1.6, +e.target.value || 60)); if (S.mode === "eye") eyeCamera(eyePos(), map3.getBearing(), S.eyeH); });
+for (const id of ["#eyeh", "#eyehP"]) $(id).addEventListener("change", e => {
+  setEyeH(Math.max(0.5, +e.target.value || 60));
+  if (S.mode === "eye") { const c = getCam(); setCam(c.p, groundAt(c.p) + S.eyeH, c.b, c.t); }
+});
 let walkT = 0;
 $("#walk").addEventListener("pointerdown", e => {
   const w = e.target.dataset.w; if (!w) return;
@@ -248,7 +353,12 @@ function attachEditor(m) {
     const sf = m.queryRenderedFeatures(e.point, {layers: ["shapes-fill"]});
     if (sf.some(f => f.properties.id === sel)) { drag = {type: "handle", h: {type: "move"}, start: p, orig: clone(s), moved: false}; return begin(e); }
   }
-  function begin(e) { e.preventDefault(); m.dragPan.disable(); if (m.touchZoomRotate) m.touchZoomRotate.disable(); }
+  let panWas = true, zoomWas = true;
+  function begin(e) {
+    e.preventDefault(); editingNow = true;
+    panWas = m.dragPan.isEnabled(); zoomWas = m.touchZoomRotate.isEnabled();
+    m.dragPan.disable(); m.touchZoomRotate.disable();
+  }
   function move(e) {
     if (!drag) return;
     drag.moved = true;
@@ -264,7 +374,8 @@ function attachEditor(m) {
   function end(e) {
     if (!drag) return;
     const d = drag; drag = null; justDragged = true; setTimeout(() => justDragged = false, 50);
-    m.dragPan.enable(); if (m.touchZoomRotate) m.touchZoomRotate.enable();
+    editingNow = false;
+    if (panWas) m.dragPan.enable(); if (zoomWas) m.touchZoomRotate.enable();
     setDraft(null);
     if (d.type === "draw") {
       const p = e && e.lngLat ? P(e) : d.start;
@@ -309,10 +420,9 @@ function renderGrid() {
 // camera of the 3D view on the top map
 function updateCam() {
   if (!mapT || !mapT.getSource("cam")) return;
-  const c = map3.getCenter().toArray(), b = map3.getBearing(), pitch = map3.getPitch();
-  const back = S.mode === "eye" ? eyeD : Math.tan(pitch * Math.PI / 180) * 300;
-  const r = b * Math.PI / 180, cam = G.offset(c, -back * Math.sin(r), -back * Math.cos(r));
-  const L = Math.max(250, back * 1.3), a1 = r - 0.42, a2 = r + 0.42;
+  const c = getCam(), r = c.b * RAD, cam = c.p;
+  const L = Math.max(120, Math.min(1500, Math.abs(heightAbove(c)) * (c.t < 80 ? 2.5 * Math.tan(Math.max(c.t, 20) * RAD) : 8)));
+  const a1 = r - 0.42, a2 = r + 0.42;
   const cone = [cam, G.offset(cam, L * Math.sin(a1), L * Math.cos(a1)), G.offset(cam, L * Math.sin(a2), L * Math.cos(a2)), cam];
   mapT.getSource("cam").setData({type: "FeatureCollection", features: [
     {type: "Feature", properties: {}, geometry: {type: "Polygon", coordinates: [cone]}},
@@ -481,8 +591,10 @@ async function search(q) {
 function go(name, c) {
   $("#results").classList.remove("on"); $("#q").blur();
   setPlace(name, c);
-  if (S.mode === "eye") eyeCamera(c, map3.getBearing(), S.eyeH);
-  else map3.flyTo({center: c, zoom: 16.4, duration: 1200});
+  if (S.mode === "eye") {               // the ground height there is known only once its terrain tiles are in
+    map3.jumpTo({center: c, zoom: 17, pitch: 60, elevation: 0});
+    map3.once("idle", () => setCam(c, groundAt(c) + S.eyeH, map3.getBearing(), 80));
+  } else map3.flyTo({center: c, zoom: S.mode === "top" ? 15.5 : 16.4, pitch: S.mode === "top" ? 0 : 58, elevation: 0, duration: 1200});
   if (mapT) mapT.jumpTo({center: c, zoom: 15.2});
 }
 $("#q").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.value.trim()) search(e.target.value.trim()); });
@@ -566,7 +678,7 @@ document.addEventListener("keydown", e => {
   if (k === "d" && (e.ctrlKey || e.metaKey) && sel) { e.preventDefault(); dupShape(); return; }
   if (!e.ctrlKey && !e.metaKey && !e.altKey) {
     const walkKeys = {w: "fwd", s: "back", a: "left", d: "right", q: "turnL", e: "turnR", z: "up", x: "down", arrowup: "fwd", arrowdown: "back", arrowleft: "turnL", arrowright: "turnR"};
-    if (S.mode === "eye" && walkKeys[k]) { e.preventDefault(); walk(walkKeys[k], e.shiftKey); return; }
+    if (walkKeys[k]) { e.preventDefault(); walk(walkKeys[k], e.shiftKey); return; }
     if (k === "r") setTool("rect"); else if (k === "c") setTool("circle"); else if (k === "g") setTool("box"); else if (k === "v") setTool("select");
     else if (k === "f") { map3.easeTo({center: S.place.c, duration: 600}); }
   }
@@ -574,4 +686,4 @@ document.addEventListener("keydown", e => {
 
 setTool("select");
 renderList(); renderSel(); renderEstimate();
-window.__app = {S, setMode, walk, runExport, addShape, renderShapes, get sel() { return sel; }};
+window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, getCam, dolly, turn, pan, groundAt, get sel() { return sel; }};

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#1f2026">
 <title>背景ロケハン</title>
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -79,7 +79,9 @@
       <div class="pad"><b data-w="fwd">▲</b><b data-w="left">◀</b><b data-w="back">▼</b><b data-w="right">▶</b></div>
       <div class="pad2"><b data-w="turnL">⟲</b><b data-w="turnR">⟳</b><b data-w="up">上</b><b data-w="down">下</b></div>
     </div>
-    <div class="maphint pc-only" id="hint3d">左ドラッグ：動かす　右ドラッグ：回す・傾ける　ホイール：寄る　目線では W A S D で歩く・Q E で向き・Z X で高さ</div>
+    <div id="hud"><span id="hudText"></span><button id="toGround" hidden>地上に戻る</button></div>
+    <div class="maphint pc-only" id="hint3d">左ドラッグ：動かす　右ドラッグ：回す・傾ける　ホイール：前後に進む（どこまでも）　W A S D：歩く　Q E：向き　Z X：上下</div>
+    <div class="maphint phone-only" id="hintPhone">1本指：向き・傾き　2本指：移動・ズーム（どこまでも寄れます）</div>
   </div>
   <div id="maptop" class="mapbox pc-only">
     <div class="ftools" id="ftoolsPC">
@@ -89,7 +91,7 @@
   </div>
 </main>
 <div id="toast"></div>
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
 <script type="module" src="app.js"></script>
 </body>
 </html>
