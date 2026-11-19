@@ -1,15 +1,15 @@
 // 背景ロケハン: pick a place in 3D, place ranges (rect / circle / mesh grid), export the data for Blender.
 // One page for phone and PC: the PC layout adds a top-down map next to the 3D view.
-import * as G from "./lib/geo.js?v=202611200101";
-import { registerGsiDem } from "./lib/gsidem.js?v=202611200101";
-import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611200101";
-import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200101";
-import { omtArea } from "./lib/omttile.js?v=202611200101";
-import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200101";
-import { photoMask } from "./lib/phototrees.js?v=202611200101";
-import { unzip } from "./lib/zip.js?v=202611200101";
-import { placeName } from "./lib/gsiname.js?v=202611200101";
-import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200101";
+import * as G from "./lib/geo.js?v=202611200145";
+import { registerGsiDem } from "./lib/gsidem.js?v=202611200145";
+import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape, autoCenter } from "./lib/shapes.js?v=202611200145";
+import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200145";
+import { omtArea } from "./lib/omttile.js?v=202611200145";
+import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200145";
+import { photoMask } from "./lib/phototrees.js?v=202611200145";
+import { unzip } from "./lib/zip.js?v=202611200145";
+import { placeName } from "./lib/gsiname.js?v=202611200145";
+import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200145";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const PC = matchMedia("(min-width: 900px)").matches;
@@ -23,7 +23,7 @@ const DEF = {
   view: {center: [139.7005, 35.6595], zoom: 16.4, bearing: -20, pitch: 58}, mode: "oblique",
   place: {name: "渋谷スクランブル交差点", c: [139.7005, 35.6595]},
   base: "photo", terrain: true, trees: true, fog: 1, eyeH: 60, gridLevel: 4, showGrid: true,
-  outside: "none", outsideR: 2000, shapes: [], favs: [], nextId: 1, near: true, look: true, moveQ: 0.25, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
+  outside: "none", outsideR: 2000, vp: null, vpH: 1.6, shapes: [], favs: [], nextId: 1, near: true, look: true, moveQ: 0.25, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
 };
 let S;
 try { S = Object.assign(clone(DEF), JSON.parse(localStorage.getItem("rokehan") || "{}")); } catch { S = clone(DEF); }
@@ -102,7 +102,7 @@ function applyTerrain() { try { map3.setTerrain(S.terrain ? {source: "dem", exag
 
 const EMPTY = {type: "FeatureCollection", features: []};
 function addAppLayers(m, role) {
-  for (const id of ["grid", "shapes", "handles", "draft", "trees", "cam", "near"]) m.addSource(id, {type: "geojson", data: EMPTY});
+  for (const id of ["grid", "shapes", "handles", "draft", "trees", "cam", "near", "outer"]) m.addSource(id, {type: "geojson", data: EMPTY});
   if (role === "3d") m.addLayer({id: "near", type: "fill-extrusion", source: "near", minzoom: 13,
     paint: {"fill-extrusion-color": ["get", "color"], "fill-extrusion-height": ["get", "top"], "fill-extrusion-base": ["get", "base"],
             "fill-extrusion-opacity": 0.97, "fill-extrusion-vertical-gradient": true}});
@@ -114,6 +114,7 @@ function addAppLayers(m, role) {
     paint: {"line-color": ["get", "color"], "line-width": ["case", ["get", "sel"], 3.2, 2.2]}});
   m.addLayer({id: "shapes-dash", type: "line", source: "shapes", filter: ["==", ["get", "level"], "far"],
     paint: {"line-color": ["get", "color"], "line-width": ["case", ["get", "sel"], 3, 2], "line-dasharray": [3, 2]}});
+  m.addLayer({id: "outer", type: "line", source: "outer", paint: {"line-color": "#a875ff", "line-width": 1.8, "line-dasharray": [1, 2]}});
   m.addLayer({id: "draft", type: "line", source: "draft", paint: {"line-color": "#f39a2b", "line-width": 2.5, "line-dasharray": [2, 1]}});
   if (role === "top") {
     m.addLayer({id: "cam-cone", type: "fill", source: "cam", filter: ["==", ["geometry-type"], "Polygon"], paint: {"fill-color": "#ff5a4a", "fill-opacity": 0.16}});
@@ -392,7 +393,32 @@ function renderShapes() {
     m.getSource("shapes").setData({type: "FeatureCollection", features: fs});
     m.getSource("handles").setData({type: "FeatureCollection", features: hs});
   }
-  renderLabels(); renderList(); renderSel(); renderEstimate(); syncOverlay();
+  renderLabels(); renderList(); renderSel(); renderEstimate(); renderVp();
+}
+// 中心点: the point the far boards are shot from (and the middle of the circle of 範囲の外). Placed with the 📷 tool,
+// otherwise the middle of the most detailed ranges.
+const vpOf = () => S.vp ? S.vp.p : autoCenter(S.shapes);
+const vpMarks = [];
+let outerRing = null;
+function renderVp() {
+  const c = vpOf();
+  outerRing = null;
+  if (c && S.outside === "far") {
+    const n = 90; outerRing = [];
+    for (let i = 0; i <= n; i++) outerRing.push(G.offset(c, S.outsideR * Math.cos(i / n * 2 * Math.PI), S.outsideR * Math.sin(i / n * 2 * Math.PI)));
+  }
+  const data = outerRing ? {type: "FeatureCollection", features: [{type: "Feature", properties: {}, geometry: {type: "LineString", coordinates: outerRing}}]} : EMPTY;
+  maps.forEach(m => m.getSource("outer") && m.getSource("outer").setData(data));
+  vpMarks.splice(0).forEach(mk => mk.remove());
+  if (c) for (const m of maps) {
+    const el = document.createElement("div");
+    el.className = "vpm" + (S.vp ? "" : " auto");
+    el.innerHTML = `<span>中心点${S.vp ? "" : "（自動）"}</span><b>📷</b><i></i>`;
+    vpMarks.push(new maplibregl.Marker({element: el, anchor: "bottom"}).setLngLat(c).addTo(m));
+  }
+  $("#vpText").textContent = !c ? "範囲を置くと決まります" : S.vp ? "地図で置いた位置" : "自動（いちばん細かい範囲の真ん中）";
+  $("#vpAuto").disabled = !S.vp;
+  syncOverlay();
 }
 // The detailed view covers the map near the camera with its own ground, so it draws the range outlines, the one
 // being drawn and the mesh grid itself.
@@ -409,6 +435,7 @@ function syncOverlay() {
   }
   for (const sh of S.shapes) lines.push({pts: ringOf(sh), color: colorOf(sh), width: sh.id === sel ? 2.4 : 1.6, dash: sh.level === "far" ? 4 : 0});
   if (draftRing) lines.push({pts: draftRing, color: "#f39a2b", width: 2, dash: 3});
+  if (outerRing) lines.push({pts: outerRing, color: "#a875ff", width: 1.8, dash: 2});
   detail.setOverlay(lines);
 }
 const markers = [];
@@ -433,7 +460,8 @@ function setTool(t) {
   const hints = {select: "範囲をタップして選ぶ。白い印で大きさ、棒の先の色の丸を回して回転、中をドラッグで移動（四角と扇）。",
     rect: "地図をなぞって四角を置きます（タップだけなら 200×120m）。", circle: "中心からなぞって丸を置きます（タップだけなら半径 150m）。",
     fan: "要（かなめ）の点から、広げたい向きへなぞって扇を置きます（開きは 60°。タップだけなら、見ている向きへ半径 300m）。先の白い印で長さ、両端で開き、棒の先の色の丸で回転。",
-    box: "なぞった所の格子をまとめて選びます（タップで 1 マス）。"};
+    box: "なぞった所の格子をまとめて選びます（タップで 1 マス）。",
+    center: "地図をタップして中心点（板ポリを撮る位置）を置きます。なぞると動きます。「範囲の外」の丸もここが中心になります。"};
   $("#toolHint").textContent = hints[t];
   if (t === "box" && !S.showGrid) { S.showGrid = true; $("#gridOn").checked = true; renderGrid(); }
 }
@@ -454,6 +482,7 @@ function attachEditor(m) {
     if (oe.touches && oe.touches.length > 1) { if (drag) end(); return; }
     if (oe.button === 2) return;
     const p = P(e);
+    if (tool === "center") { drag = {type: "center", moved: false}; S.vp = {p}; renderVp(); return begin(e); }
     if (tool !== "select") { drag = {type: "draw", start: p, moved: false}; return begin(e); }
     const s = S.shapes.find(x => x.id === sel);
     if (!s || !m.getLayer("handles")) return;
@@ -472,6 +501,7 @@ function attachEditor(m) {
     if (!drag) return;
     drag.moved = true;
     const p = P(e);
+    if (drag.type === "center") { S.vp = {p}; renderVp(); return; }
     if (drag.type === "draw") setDraft(drawShape(tool, drag.start, p, m.getBearing(), S.gridLevel));
     else {
       const i = S.shapes.findIndex(x => x.id === sel); if (i < 0) return;
@@ -486,6 +516,7 @@ function attachEditor(m) {
     editingNow = false;
     if (panWas) m.dragPan.enable(); if (zoomWas) m.touchZoomRotate.enable();
     setDraft(null);
+    if (d.type === "center") { save(); if (!PC) setTool("select"); toast("中心点を置きました（板ポリはここから撮ります）"); return; }
     if (d.type === "draw") {
       const p = e && e.lngLat ? P(e) : d.start;
       let sh;
@@ -640,7 +671,7 @@ async function loadNear(force) {
 let detail = null, detailLoading = null;
 function ensureDetail() {
   if (detail) return Promise.resolve(detail);
-  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200101").then(m => m.createDetail(map3, ROAD)).then(d => {
+  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200145").then(m => m.createDetail(map3, ROAD)).then(d => {
     map3.addLayer(d.layer, map3.getLayer("grid") ? "grid" : undefined);
     return (detail = d);
   }).catch(e => { console.warn("detail", e); toast("細かい見た目を読み込めませんでした（通信を確かめてください）"); detailLoading = null; return null; });
@@ -795,7 +826,7 @@ bindSeg("#baseseg", "base", "b", () => {
   loadNear(true);                                  // over the photo, the detailed view leaves out its own ground and roads
 });
 bindSeg("#gridseg", "gridLevel", "g", renderGrid);
-bindSeg("#outseg", "outside", "o", () => { $("#outRrow").style.display = S.outside === "far" ? "" : "none"; renderEstimate(); });
+bindSeg("#outseg", "outside", "o", () => { $("#outRrow").style.display = S.outside === "far" ? "" : "none"; renderEstimate(); renderVp(); });
 $("#outRrow").style.display = S.outside === "far" ? "" : "none";
 const bindCheck = (id, key, after) => { $(id).checked = !!S[key]; $(id).addEventListener("change", e => { S[key] = e.target.checked; save(); after && after(); }); };
 bindCheck("#terrainOn", "terrain", applyTerrain);
@@ -809,7 +840,11 @@ $("#nearR").value = String(S.nearR);
 $("#nearR").addEventListener("change", e => { S.nearR = +e.target.value; save(); loadNear(true); });
 renderNearLegend(null);
 $("#fog").value = String(S.fog); $("#fog").addEventListener("change", e => { S.fog = +e.target.value; save(); applySky(); });
-$("#outR").value = String(S.outsideR); $("#outR").addEventListener("change", e => { S.outsideR = +e.target.value; save(); renderEstimate(); });
+$("#outR").value = String(S.outsideR); $("#outR").addEventListener("change", e => { S.outsideR = +e.target.value; save(); renderEstimate(); renderVp(); });
+$("#vpSet").addEventListener("click", () => { setTool("center"); if (!PC) $("#panel").classList.add("min"); toast("地図をタップして中心点を置いてください"); });
+$("#vpAuto").addEventListener("click", () => { S.vp = null; save(); renderVp(); });
+$("#vpH").value = String(S.vpH);
+$("#vpH").addEventListener("change", e => { const v = parseFloat(e.target.value); if (isFinite(v)) S.vpH = Math.max(0.3, Math.min(500, v)); e.target.value = String(S.vpH); save(); });
 
 function setTab(t) {
   $$("#tabs b").forEach(b => b.classList.toggle("on", b.dataset.t === t));
@@ -926,11 +961,11 @@ async function deliver(blob, name, label, folder) {
   a.href = URL.createObjectURL(blob); a.download = name; box.appendChild(a);
   const p = document.createElement("p"); p.className = "note";
   p.textContent = folder
-    ? `「${folder.name}」というフォルダの入った zip です（データと範囲のファイルが入っています）。pCloud の受け取りフォルダ（_Rokehan）に保存してください。PC で Claude が Blender で組み立てます。`
-    : "pCloud の受け取りフォルダ（_Rokehan）に保存してください。PC で Claude が Blender で組み立てます。";
+    ? `「${folder.name}」というフォルダの入った zip です（データと範囲のファイルが入っています）。受け取りフォルダ（rokehan data）に保存してください。PC で Claude が Blender で組み立てます。`
+    : "受け取りフォルダ（rokehan data）に保存してください。PC で Claude が Blender で組み立てます。";
   box.appendChild(p);
 }
-// PC: pick a folder (for example pCloud's _Rokehan), and the export is written into a new folder there
+// PC: pick a folder (the "rokehan data" inbox), and the export is written into a new folder there
 async function saveFolder({name, files}) {
   const parent = await window.showDirectoryPicker({id: "rokehan", mode: "readwrite"});
   const root = await parent.getDirectoryHandle(name, {create: true});
@@ -947,12 +982,13 @@ async function saveFolder({name, files}) {
 }
 // The folder name for an export: the rough place name of the middle of the ranges (lib/gsiname.js) and the time
 async function exportName() {
-  const list = S.shapes.filter(s => s.level !== "none"), b = G.bboxOf(list.flatMap(ringOf));
+  // the 中心点 decides the name (the middle of every range would be pulled away from the place by a big far range)
+  const c = vpOf();
   let nm = null;
-  if (list.length) try { nm = await Promise.race([placeName([(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]), new Promise(r => setTimeout(() => r(null), 4000))]); } catch {}
+  if (c) try { nm = await Promise.race([placeName(c), new Promise(r => setTimeout(() => r(null), 4000))]); } catch {}
   return `${safeName(nm || S.place.name)}_${stamp()}`;
 }
-function rangesFile() { return {app: "haikei-rokehan", version: 1, saved: new Date().toISOString(), place: S.place, view: S.view, outside: S.outside, outsideR: S.outsideR, shapes: S.shapes, favs: S.favs}; }
+function rangesFile() { return {app: "haikei-rokehan", version: 1, saved: new Date().toISOString(), place: S.place, view: S.view, outside: S.outside, outsideR: S.outsideR, vp: S.vp, vpH: S.vpH, shapes: S.shapes, favs: S.favs}; }
 async function saveRanges() {
   setTab("export");
   const blob = new Blob([JSON.stringify(rangesFile(), null, 1)], {type: "application/json"});
@@ -961,10 +997,13 @@ async function saveRanges() {
 function openRanges(text) {
   try {
     let j = JSON.parse(text);
-    if (j.format === "haikei-rokehan") j = {shapes: j.ranges.filter(r => r.shape).map(r => r.shape), place: j.place, outside: j.settings.outside, outsideR: j.settings.outsideR};
+    if (j.format === "haikei-rokehan") j = {shapes: j.ranges.filter(r => r.shape).map(r => r.shape), place: j.place, outside: j.settings.outside, outsideR: j.settings.outsideR,
+      vp: j.viewpoint && !j.viewpoint.auto ? {p: j.viewpoint.lonlat} : null, vpH: j.viewpoint && j.viewpoint.h};
     if (!Array.isArray(j.shapes)) throw new Error("範囲のファイルではありません");
     S.shapes = j.shapes; S.nextId = Math.max(S.nextId, ...j.shapes.map(s => +String(s.id).replace(/\D/g, "") + 1 || 1));
     if (j.outside) S.outside = j.outside; if (j.outsideR) S.outsideR = j.outsideR;
+    S.vp = j.vp && j.vp.p ? j.vp : null;              // a file without one (older ones too) goes back to the automatic point
+    if (j.vpH) { S.vpH = j.vpH; $("#vpH").value = String(S.vpH); }
     if (j.place) setPlace(j.place.name, j.place.c);
     let nf = 0;                                      // favourites in the file are added (the ones already here stay)
     for (const f of Array.isArray(j.favs) ? j.favs : []) if (f && f.cam && !S.favs.some(g => g.id === f.id)) { S.favs.push(f); nf++; }
@@ -1003,7 +1042,8 @@ async function runExport() {
     const folder = await exportName();
     log(`フォルダの名前: ${folder}`);
     const extraFiles = [{name: "範囲.json", data: JSON.stringify(rangesFile(), null, 1)}];
-    const {blob, manifest, files} = await exportData({shapes: S.shapes, place: S.place, omtTiles: src && src.tiles && src.tiles[0], folder, extraFiles,
+    const viewpoint = {lonlat: vpOf(), h: S.vpH, set: !!S.vp};
+    const {blob, manifest, files} = await exportData({shapes: S.shapes, place: S.place, omtTiles: src && src.tiles && src.tiles[0], folder, extraFiles, viewpoint,
       settings: {outside: S.outside, outsideR: S.outsideR, terrain: $("#incTerrain").checked},
       onProgress: (msg, f) => { $("#progText").textContent = msg; $("#prog .bar b").style.width = Math.round(f * 100) + "%"; }, log});
     window.__lastExport = {blob, manifest};
@@ -1025,7 +1065,7 @@ document.addEventListener("keydown", e => {
   if (!e.ctrlKey && !e.metaKey && !e.altKey) {
     const walkKeys = {w: "fwd", s: "back", a: "left", d: "right", q: "turnL", e: "turnR", z: "up", x: "down", arrowup: "fwd", arrowdown: "back", arrowleft: "turnL", arrowright: "turnR"};
     if (walkKeys[k]) { e.preventDefault(); walk(walkKeys[k], e.shiftKey); return; }
-    if (k === "r") setTool("rect"); else if (k === "c") setTool("circle"); else if (k === "g") setTool("box"); else if (k === "t") setTool("fan"); else if (k === "v") setTool("select");
+    if (k === "r") setTool("rect"); else if (k === "c") setTool("circle"); else if (k === "g") setTool("box"); else if (k === "t") setTool("fan"); else if (k === "p") setTool("center"); else if (k === "v") setTool("select");
     else if (k === "f") { map3.easeTo({center: S.place.c, duration: 600}); }
   }
 });
@@ -1038,7 +1078,7 @@ window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, get
 // GitHub Pages lets a browser keep each file for 10 minutes, and phones keep a page open for days. tools/stamp.py puts
 // the same version on every file URL and in version.json; when version.json says a newer one is out, the page reloads
 // into it once (at the start, and when you come back to the page after a minute or more away).
-const APP_VERSION = "202611200101";
+const APP_VERSION = "202611200145";
 let hiddenAt = 0;
 async function checkVersion() {
   if (!APP_VERSION || exporting) return;

@@ -4,7 +4,7 @@
 // around it is rough: tree crowns are lumpy with small shadows; lawns, green roofs and green paint are smooth.
 // Trees are then put on a fixed world grid (every STEP m, shaken a little), where most of the ground within 2 m
 // is tree. The same code runs in the 3D view and in the export, so Blender gets the trees the browser showed.
-import * as G from "./geo.js?v=202611200101";
+import * as G from "./geo.js?v=202611200145";
 
 export const PHOTO_TILE = (z, x, y) => `https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/${z}/${x}/${y}.jpg`;
 const Z = 18, N = 256;

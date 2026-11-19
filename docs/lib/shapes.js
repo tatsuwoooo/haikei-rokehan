@@ -5,7 +5,7 @@
 //   fan:    {kind:"fan", c:[lon,lat] the point it opens from, r (m), dir (deg, compass: 0 = north, clockwise),
 //            spread (deg, the whole opening, 5..360)}
 // Every range also has id, name, level ("detail" | "mid" | "far" | "none").
-import { offset, delta, meshBounds, meshCode, meshStep } from "./geo.js?v=202611200101";
+import { offset, delta, meshBounds, meshCode, meshStep } from "./geo.js?v=202611200145";
 
 export const LEVELS = {
   detail: {label: "詳細", color: "#f39a2b", rank: 3},
@@ -42,6 +42,14 @@ export function bboxOfShape(sh) {
   return [Math.min(...r.map(p => p[0])), Math.min(...r.map(p => p[1])), Math.max(...r.map(p => p[0])), Math.max(...r.map(p => p[1]))];
 }
 export const centerOf = sh => sh.kind === "box" ? [(sh.b[0] + sh.b[2]) / 2, (sh.b[1] + sh.b[3]) / 2] : sh.c;
+// The middle of the most detailed ranges: the 中心点 (where the far boards are shot from) when the user has not placed one.
+export function autoCenter(shapes) {
+  const lv = ["detail", "mid", "far"].find(l => shapes.some(s => s.level === l));
+  if (!lv) return null;
+  let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity;
+  for (const sh of shapes) if (sh.level === lv) for (const p of ringOf(sh)) { w = Math.min(w, p[0]); e = Math.max(e, p[0]); s = Math.min(s, p[1]); n = Math.max(n, p[1]); }
+  return [(w + e) / 2, (s + n) / 2];
+}
 
 export function sizeText(sh) {
   if (sh.kind === "circle") return `丸 r=${fmtM(sh.r)}`;

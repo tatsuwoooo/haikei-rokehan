@@ -3,15 +3,15 @@
 //   mid ranges:    OpenFreeMap vector tiles (building footprints + heights, roads), per 3rd mesh
 //   far ranges:    OpenFreeMap vector tiles, every building as a box (centre, width, depth, angle, height)
 //   terrain:       GSI elevation tiles as they are (dem5a z15 for detail, dem z14 / z13)
-import * as G from "./geo.js?v=202611200101";
-import { decodeTile, polygons } from "./mvt.js?v=202611200101";
-import { makeZip } from "./zip.js?v=202611200101";
-import { GSI_DEM, GSI_DEM5A } from "./gsidem.js?v=202611200101";
-import { gsiTile, gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE } from "./gsibldg.js?v=202611200101";
-import { ringOf, bboxOfShape, LEVELS } from "./shapes.js?v=202611200101";
-import { autoProps, classOfOsm, treesFor } from "./props.js?v=202611200101";
-import { photoMask } from "./phototrees.js?v=202611200101";
-import { omtArea } from "./omttile.js?v=202611200101";
+import * as G from "./geo.js?v=202611200145";
+import { decodeTile, polygons } from "./mvt.js?v=202611200145";
+import { makeZip } from "./zip.js?v=202611200145";
+import { GSI_DEM, GSI_DEM5A } from "./gsidem.js?v=202611200145";
+import { gsiTile, gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE } from "./gsibldg.js?v=202611200145";
+import { ringOf, bboxOfShape, LEVELS, autoCenter } from "./shapes.js?v=202611200145";
+import { autoProps, classOfOsm, treesFor } from "./props.js?v=202611200145";
+import { photoMask } from "./phototrees.js?v=202611200145";
+import { omtArea } from "./omttile.js?v=202611200145";
 
 // Order of tries: the main server gets most of them; the backups are often unreachable, so they get a short limit.
 const OVERPASS_MAIN = "https://overpass-api.de/api/interpreter";
@@ -152,12 +152,15 @@ function areaKind(t) {
 
 // ------------------------------------------------------------------ main
 // folder: every file goes inside this folder of the zip (so unpacking gives one folder); extraFiles are added to it.
-export async function exportData({shapes, settings, place, omtTiles, folder = "", extraFiles = [], onProgress = () => {}, log = () => {}}) {
+// viewpoint: the 中心点 {lonlat, h (m above the ground), set (placed by the user)}; without one, the middle of the most detailed ranges.
+export async function exportData({shapes, settings, place, omtTiles, viewpoint = null, folder = "", extraFiles = [], onProgress = () => {}, log = () => {}}) {
   const t0 = Date.now();
   const ranges = shapes.filter(s => s.level !== "none").map(s => ({id: s.id, name: s.name, level: s.level, kind: s.kind, ring: ringOf(s), bbox: bboxOfShape(s), shape: s}));
   if (!ranges.length) throw new Error("作る範囲がありません。");
   const all = G.bboxOf(ranges.flatMap(r => r.ring));
-  const center = [(all[0] + all[2]) / 2, (all[1] + all[3]) / 2];
+  // The 中心点: the far boards are shot from here, the circle of 範囲の外 goes round it, and the local origin is put here.
+  // (Before 2026-11-20 this was the middle of every range, so a big far range pulled it away from the place itself.)
+  const center = (viewpoint && viewpoint.lonlat) || autoCenter(shapes) || [(all[0] + all[2]) / 2, (all[1] + all[3]) / 2];
   if (settings.outside === "far") {
     const R = settings.outsideR || 2000, n = 72, ring = [];
     for (let i = 0; i <= n; i++) ring.push(G.offset(center, R * Math.cos(i / n * 2 * Math.PI), R * Math.sin(i / n * 2 * Math.PI)));
@@ -453,6 +456,7 @@ export async function exportData({shapes, settings, place, omtTiles, folder = ""
   const manifest = {
     format: "haikei-rokehan", version: 1, created: new Date().toISOString(),
     place: place || null, center, zone, prefecture: pref,
+    viewpoint: {lonlat: center, local: L(center[0], center[1]), h: (viewpoint && viewpoint.h) || 1.6, auto: !(viewpoint && viewpoint.set)},
     origin: {plane: origin, note: "local = plane rectangular [east, north] (m) - origin.plane"},
     settings, ranges: ranges.map(r => ({id: r.id, name: r.name, level: r.level, kind: r.kind, outside: !!r.outside, ring_lonlat: r.ring, ring_local: LR(r.ring), shape: r.shape || null})),
     sections: secList,

@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#1f2026">
 <title>背景ロケハン</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="style.css?v=202611200101">
+<link rel="stylesheet" href="style.css?v=202611200145">
 </head>
 <body>
 <header id="bar">
@@ -52,7 +52,7 @@
       <section data-p="ranges">
         <div class="cap">道具</div>
         <div class="tools" id="tools">
-          <b data-tool="select">☝ 選ぶ</b><b data-tool="rect">▭ 四角</b><b data-tool="circle">◯ 丸</b><b data-tool="fan">◔ 扇</b><b data-tool="box">▦ 格子</b>
+          <b data-tool="select">☝ 選ぶ</b><b data-tool="rect">▭ 四角</b><b data-tool="circle">◯ 丸</b><b data-tool="fan">◔ 扇</b><b data-tool="box">▦ 格子</b><b data-tool="center">📷 中心点</b>
         </div>
         <div class="row"><span>格子の大きさ</span><div class="seg sm" id="gridseg"><b data-g="4">約500m</b><b data-g="3">約1km</b></div></div>
         <div class="row"><span>格子を表示</span><label class="sw"><input type="checkbox" id="gridOn"><i></i></label></div>
@@ -63,6 +63,11 @@
         <div class="cap">範囲の外</div>
         <div class="seg" id="outseg"><b data-o="none">作らない</b><b data-o="far">板ポリにする</b></div>
         <div class="row" id="outRrow"><span>板ポリの広さ（半径）</span><select id="outR"><option value="1000">1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
+        <div class="cap">中心点（板ポリを撮る位置）</div>
+        <div class="row"><span id="vpText" class="mu">—</span></div>
+        <div class="row2"><button class="ib wide" id="vpSet">📷 地図で置く</button><button class="ib wide" id="vpAuto">自動に戻す</button></div>
+        <div class="row"><span>撮る高さ（地面から）</span><span><input id="vpH" type="number" min="0.3" max="500" step="0.1" style="width:70px"> m</span></div>
+        <p class="note">遠景の板ポリは、この点から撮った街並みを周りの板に貼ります。「範囲の外」の丸もこの点が中心です。置かなければ、いちばん細かい範囲の真ん中になります。</p>
       </section>
       <section data-p="export">
         <div class="cap">書き出す</div>
@@ -82,7 +87,7 @@
   </aside>
   <div id="map3d" class="mapbox">
     <div class="ftools phone-only" id="ftools">
-      <b data-tool="select">☝</b><b data-tool="rect">▭</b><b data-tool="circle">◯</b><b data-tool="fan">◔</b><b data-tool="box">▦</b>
+      <b data-tool="select">☝</b><b data-tool="rect">▭</b><b data-tool="circle">◯</b><b data-tool="fan">◔</b><b data-tool="box">▦</b><b data-tool="center">📷</b>
     </div>
     <div id="walk" hidden>
       <div class="pad"><b data-w="fwd">▲</b><b data-w="left">◀</b><b data-w="back">▼</b><b data-w="right">▶</b></div>
@@ -94,13 +99,13 @@
   </div>
   <div id="maptop" class="mapbox pc-only">
     <div class="ftools" id="ftoolsPC">
-      <b data-tool="select">☝ 選ぶ</b><b data-tool="rect">▭ 四角 <kbd>R</kbd></b><b data-tool="circle">◯ 丸 <kbd>C</kbd></b><b data-tool="fan">◔ 扇 <kbd>T</kbd></b><b data-tool="box">▦ 格子 <kbd>G</kbd></b>
+      <b data-tool="select">☝ 選ぶ</b><b data-tool="rect">▭ 四角 <kbd>R</kbd></b><b data-tool="circle">◯ 丸 <kbd>C</kbd></b><b data-tool="fan">◔ 扇 <kbd>T</kbd></b><b data-tool="box">▦ 格子 <kbd>G</kbd></b><b data-tool="center">📷 中心点 <kbd>P</kbd></b>
     </div>
     <div class="maphint">ドラッグで描く・角や印で調整　<kbd>Del</kbd> 消す　<kbd>Ctrl</kbd>+<kbd>D</kbd> 複製　<kbd>Esc</kbd> 選ぶ道具へ</div>
   </div>
 </main>
 <div id="toast"></div>
 <script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
-<script type="module" src="app.js?v=202611200101"></script>
+<script type="module" src="app.js?v=202611200145"></script>
 </body>
 </html>

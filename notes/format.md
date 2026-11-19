@@ -2,7 +2,7 @@
 
 ブラウザアプリの「書き出す」で作る zip の中身。Blender 側のスクリプトはこれを読む。
 
-zip の中は、zip と同じ名前のフォルダ 1 つにまとまっている（展開するとフォルダ 1 つになる）。名前は「範囲の真ん中のだいたいの地名_日時」（例 `三軒茶屋駅前_20261120-0059`）。PC のブラウザでは「フォルダとして保存」で、zip にせずにこのフォルダをそのまま書くこともできる。2026-11-20 より前の書き出しは `rokehan_<場所>_<日時>.zip` で、フォルダが無く、`範囲.json` も無い。
+zip の中は、zip と同じ名前のフォルダ 1 つにまとまっている（展開するとフォルダ 1 つになる）。名前は「中心点のだいたいの地名_日時」（例 `三軒茶屋駅前_20261120-0059`）。PC のブラウザでは「フォルダとして保存」で、zip にせずにこのフォルダをそのまま書くこともできる。2026-11-20 より前の書き出しは `rokehan_<場所>_<日時>.zip` で、フォルダが無く、`範囲.json` も無い。
 
 ```
 <地名>_<日時>.zip
@@ -26,11 +26,12 @@ manifest.json の中のファイルの場所（`sections[].file`、`terrain.tile
 | `format`, `version` | `"haikei-rokehan"`, `1` |
 | `created` | 書き出した日時（ISO） |
 | `place` | `{name, c:[lon,lat]}` 場所の名前 |
-| `center` | 範囲全体の中心 [lon, lat] |
+| `center` | 中心点 [lon, lat]（`viewpoint.lonlat` と同じ。ローカル座標の原点もここを 10m に丸めた所）。2026-11-20 より前の書き出しは、範囲全体の中心 |
+| `viewpoint` | 中心点 = 板ポリを撮る位置 `{lonlat, local: [東, 北] m, h: 撮る高さ（地面から m）, auto}`。`auto: true` はユーザーが置いていない（いちばん細かい範囲の真ん中）。2026-11-20 より前の書き出しには無い（そのときは、いちばん細かい範囲の真ん中を使う） |
 | `zone`, `prefecture` | 平面直角座標系の系、都道府県コード（分からなければ null） |
 | `origin.plane` | ローカル座標の原点（系の座標 [東, 北]、10m 単位に丸め） |
 | `settings` | `{outside: "none"|"far", outsideR, terrain}` |
-| `ranges[]` | ユーザーが置いた範囲。`{id, name, level, kind, outside, ring_lonlat, ring_local, shape}`。`kind` は rect（四角）・circle（丸）・fan（扇）・box（格子）。扇の `shape` は `{c: 要の経緯度, r: 半径 m, dir: 向き（度。北 0、時計回り）, spread: 開き（度）}`。区画分けや建物の振り分けは、どの形でも `ring` で行う。`outside: true` は「範囲の外を板ポリにする」で作った丸 |
+| `ranges[]` | ユーザーが置いた範囲。`{id, name, level, kind, outside, ring_lonlat, ring_local, shape}`。`kind` は rect（四角）・circle（丸）・fan（扇）・box（格子）。扇の `shape` は `{c: 要の経緯度, r: 半径 m, dir: 向き（度。北 0、時計回り）, spread: 開き（度）}`。区画分けや建物の振り分けは、どの形でも `ring` で行う。`outside: true` は「範囲の外を板ポリにする」で作った丸（中心は中心点、半径は `settings.outsideR`） |
 | `sections[]` | 区画。`{id, level, mesh, bounds (lon/lat), bounds_local [w,s,e,n], ranges[], file, counts, terrain[]}` |
 | `terrain` | 標高タイルの一覧 `{file, src, z, x, y}` と符号化の説明 |
 | `attribution` | 出典（作品に使うときに表記する） |

@@ -47,7 +47,7 @@ aside{width:clamp(270px,24vw,340px);flex:0 0 clamp(270px,24vw,340px);border-righ
 .sw i:after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.15s}
 .sw input:checked+i{background:var(--ok)}
 .sw input:checked+i:after{left:19px}
-.tools{display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+.tools{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
 .tools b,.ftools b{background:var(--ui2);border-radius:8px;padding:7px 4px;text-align:center;font-weight:500;cursor:pointer;user-select:none;white-space:nowrap}
 .tools b.on,.ftools b.on{background:var(--det);color:#1b1b1b;font-weight:700}
 .ftools{position:absolute;left:10px;top:10px;display:flex;gap:5px;z-index:5}
@@ -84,6 +84,11 @@ aside{width:clamp(270px,24vw,340px);flex:0 0 clamp(270px,24vw,340px);border-righ
 #log:empty{display:none}
 #result{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 #result:empty{display:none}
+.vpm{display:flex;flex-direction:column;align-items:center;pointer-events:none;font:700 11px "Yu Gothic UI",sans-serif}
+.vpm span{background:#a875ff;color:#fff;padding:1px 6px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.vpm b{font-size:20px;line-height:1.1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
+.vpm i{width:8px;height:8px;border-radius:50%;background:#a875ff;border:2px solid #fff}
+.vpm.auto span{background:rgba(168,117,255,.75)}
 .lbl{font:700 11.5px "Yu Gothic UI",sans-serif;padding:2px 7px;border-radius:6px;color:#1b1b1b;white-space:nowrap;pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,.3)}
 #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#111;border:1px solid var(--line);padding:9px 16px;border-radius:9px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:100;max-width:90vw}
 #toast.on{opacity:1}
