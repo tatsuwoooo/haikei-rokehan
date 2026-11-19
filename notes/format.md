@@ -1,0 +1,68 @@
+# 書き出しファイルの形式（version 1）
+
+ブラウザアプリの「書き出す」で作る zip の中身。Blender 側のスクリプトはこれを読む。
+
+```
+rokehan_<場所>_<日時>.zip
+├─ manifest.json
+├─ sections/<区画 ID>.json        区画ごとの物
+└─ terrain/<dem5a|dem>/<z>/<x>/<y>.png   国土地理院の標高タイル（そのまま）
+```
+
+## 座標
+- 平面直角座標系（JGD2011）の系を、中心の都道府県から選ぶ（`manifest.zone`、1〜19）。
+- 物の座標は **[東, 北]（m）**。系の原点からの値から `manifest.origin.plane` を引いた「ローカル座標」。Blender の X = 東、Y = 北にそのまま使える。
+- 同じ系なら、別の日に書き出したデータも `origin.plane` の差だけずらせばぴったり並ぶ。
+- 高さ（Z）は入っていない。地形の上に置くときは、標高タイルから求める。
+
+## manifest.json
+| キー | 内容 |
+|---|---|
+| `format`, `version` | `"haikei-rokehan"`, `1` |
+| `created` | 書き出した日時（ISO） |
+| `place` | `{name, c:[lon,lat]}` 場所の名前 |
+| `center` | 範囲全体の中心 [lon, lat] |
+| `zone`, `prefecture` | 平面直角座標系の系、都道府県コード（分からなければ null） |
+| `origin.plane` | ローカル座標の原点（系の座標 [東, 北]、10m 単位に丸め） |
+| `settings` | `{outside: "none"|"far", outsideR, terrain}` |
+| `ranges[]` | ユーザーが置いた範囲。`{id, name, level, kind, outside, ring_lonlat, ring_local, shape}`。`outside: true` は「範囲の外を板ポリにする」で作った丸 |
+| `sections[]` | 区画。`{id, level, mesh, bounds (lon/lat), bounds_local [w,s,e,n], ranges[], file, counts, terrain[]}` |
+| `terrain` | 標高タイルの一覧 `{file, src, z, x, y}` と符号化の説明 |
+| `attribution` | 出典（作品に使うときに表記する） |
+
+## 区画（sections）
+- `detail_<1/2 メッシュコード 9 桁>`: 詳細。約 500m。
+- `mid_<3 次メッシュコード 8 桁>`: 中景。約 1km。
+- `far_<範囲 ID>`: 板ポリ。範囲 1 つにつき 1 区画（`far_outside` は範囲の外）。
+- 区画の形は「メッシュの四角」と「その区画の範囲（`ranges` の ID）」の重なり。Blender で切り取るときは、`bounds_local` の四角と、その `ranges` の `ring_local` の重なりを使う。
+- **建物は、中心がある区画にだけ入っている**（重複なし）。範囲が重なる所は細かい方（詳細 > 中景 > 板ポリ）の区画に入る。
+- 道・線路・塀・電線・面（公園や水）は、区画の四角（＋40m）にかかるものが全部入っている。区画の形で切り取ること。区画をまたぐ線は両方の区画に入っている。
+- 点の物（木・信号など）は、その区画の詳細の範囲の中のものだけ。
+
+## sections/<ID>.json
+共通: `{id, level, mesh, buildings, roads, rails, areas, barriers, power, points}`
+
+### 詳細（OSM）
+- `buildings[]`: `{id, fp: [[e,n],...] 外周（閉じ点なし）, holes: [[...]], h: 高さ m, hSrc: "height"|"levels"|"guess", minH, levels, use: building タグ, roof: roof:shape, colour, material, name, c: 中心, area: m²}`
+  - `hSrc = "guess"` は高さが地図に無く、用途と面積から推測した値。
+- `roads[]`: `{id, kind: highway の値, pts: [[e,n],...], tags: {name, lanes, width, oneway, layer, bridge, tunnel, sidewalk, surface, ...}}`
+- `rails[]`: `{id, kind: railway の値, pts, tags}`
+- `areas[]`: `{id, kind: water|park|grass|forest|parking|pitch|..., rings: [[[e,n],...]]}`、川などの線は `{kind: "waterway_river", line: [...]}`
+- `barriers[]`: `{id, kind: wall|fence|retaining_wall|..., pts, tags}`
+- `power[]`: `{id, kind: line|minor_line, pts}`
+- `points[]`: `{kind, p: [e,n], tags, id}`。kind は tree / street_lamp / traffic_signals / crossing / bus_stop / sign / utility_pole / power_tower / street_cabinet / fire_hydrant / vending_machine / bench / post_box / telephone / bicycle_parking / waste_basket / toilets
+
+### 中景（ベクトルタイル）
+- `buildings[]`: `{fp: [[e,n],...], h, minH}`（用途などのタグは無い）
+- `roads[]`: `{kind: class（motorway, primary, minor, service, rail, path …）, sub, brunnel: bridge|tunnel|null, layer, pts}`
+
+### 板ポリ（ベクトルタイル）
+- `buildings[]`: `{box: [cx, cy, 幅, 奥行き, 角度(度, 東から反時計回り)], h}`
+
+## 標高タイル
+- 国土地理院の PNG をそのまま入れている。高さ = (R×65536 + G×256 + B) × 0.01 m。2²³ 以上は負の値（−2²⁴ する）。(128,0,0) はデータなし（海など）。
+- `dem5a` は z15（約 5m、欠けがある）、`dem` は z14（約 10m）または z13（板ポリ）。詳細は dem5a を使い、欠けた所を dem で埋める。
+- タイル座標 → 経緯度は Web メルカトル。経緯度 → ローカル座標は、manifest の系で平面直角座標に直してから `origin.plane` を引く。
+
+## 出典
+OSM（ODbL）、OpenFreeMap / OpenMapTiles、国土地理院。作品に使うときは出典を表記する。

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f2026">
+<title>背景ロケハン</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="bar">
+  <span class="logo">背景ロケハン</span>
+  <div class="searchbox">
+    <input id="q" type="search" placeholder="地名・住所・緯度経度" autocomplete="off" enterkeyhint="search">
+    <div id="results"></div>
+  </div>
+  <button id="locate" class="ib" title="現在地へ（位置はこの端末の中でだけ使います）">📍<span class="pc-only"> 現在地</span></button>
+  <div class="seg" id="viewseg"><b data-v="top">真上</b><b data-v="oblique">見下ろし</b><b data-v="eye">目線</b></div>
+  <div class="pc-only hgt" id="hgt">高さ <input id="eyeh" type="number" min="1" max="500" step="5"> m</div>
+  <div class="pc-only" style="margin-left:auto;display:flex;gap:8px">
+    <button class="ib" id="openBtnPC">📂 範囲を開く</button><button class="ib" id="saveBtnPC">範囲を保存</button><button class="pr" id="exportBtnPC">⇪ 書き出す</button>
+  </div>
+</header>
+<main>
+  <aside id="panel">
+    <div id="grab"><i></i></div>
+    <nav id="tabs"><b data-t="place">場所</b><b data-t="ranges">範囲</b><b data-t="export">書き出す</b></nav>
+    <div id="pages">
+      <section data-p="place">
+        <div class="cap">場所</div>
+        <div id="placeName" class="big">—</div>
+        <div id="placeSub" class="mu"></div>
+        <div class="kv"><span>近く 500m の建物</span><b id="nearCount">—</b></div>
+        <div class="cap">表示</div>
+        <div class="row"><span>地図</span><div class="seg sm" id="baseseg"><b data-b="map">地図</b><b data-b="photo">写真</b></div></div>
+        <div class="row"><span>地形の起伏</span><label class="sw"><input type="checkbox" id="terrainOn"><i></i></label></div>
+        <div class="row"><span>近くの木</span><label class="sw"><input type="checkbox" id="treesOn"><i></i></label></div>
+        <div class="row"><span>霞（見える距離の目安）</span><select id="fog"><option value="0.5">500m</option><option value="1">1km</option><option value="2">2km</option><option value="4">4km</option></select></div>
+        <div class="row phone-only"><span>目線の高さ</span><span><input id="eyehP" type="number" min="1" max="500" step="5" style="width:70px"> m</span></div>
+        <p class="note">3D は場所を決めるための簡易表示です。建物の高さは地図データの値、無いものは推測です。</p>
+      </section>
+      <section data-p="ranges">
+        <div class="cap">道具</div>
+        <div class="tools" id="tools">
+          <b data-tool="select">☝ 選ぶ</b><b data-tool="rect">▭ 四角</b><b data-tool="circle">◯ 丸</b><b data-tool="box">▦ 格子</b>
+        </div>
+        <div class="row"><span>格子の大きさ</span><div class="seg sm" id="gridseg"><b data-g="4">約500m</b><b data-g="3">約1km</b></div></div>
+        <div class="row"><span>格子を表示</span><label class="sw"><input type="checkbox" id="gridOn"><i></i></label></div>
+        <p class="hint" id="toolHint"></p>
+        <div class="cap"><span>作る範囲</span><span id="rangeCount"></span></div>
+        <div id="list"></div>
+        <div id="selbox"></div>
+        <div class="cap">範囲の外</div>
+        <div class="seg" id="outseg"><b data-o="none">作らない</b><b data-o="far">板ポリにする</b></div>
+        <div class="row" id="outRrow"><span>板ポリの広さ（半径）</span><select id="outR"><option value="1000">1km</option><option value="2000">2km</option><option value="3000">3km</option><option value="5000">5km</option></select></div>
+      </section>
+      <section data-p="export">
+        <div class="cap">書き出す</div>
+        <div id="estimate"></div>
+        <div class="row"><span>地形（国土地理院 5m / 10m）</span><label class="sw"><input type="checkbox" id="incTerrain" checked><i></i></label></div>
+        <p class="note">詳細の範囲は約 500m ごと、中景は約 1km ごとの区画に自動で分けます。座標は平面直角座標系（m）です。</p>
+        <button class="pr wide" id="exportBtn">⇪ 書き出す</button>
+        <div id="prog" hidden><div class="bar"><b></b></div><div id="progText" class="mu"></div></div>
+        <div id="result"></div>
+        <pre id="log"></pre>
+        <div class="cap">範囲のファイル</div>
+        <div class="row2"><button class="ib wide" id="saveBtn">範囲を保存</button><button class="ib wide" id="openBtn">📂 範囲を開く</button></div>
+        <input type="file" id="openFile" accept=".json,application/json" hidden>
+        <p class="attr">© OpenStreetMap contributors / OpenFreeMap © OpenMapTiles / 国土地理院（地図・写真・標高）</p>
+      </section>
+    </div>
+  </aside>
+  <div id="map3d" class="mapbox">
+    <div class="ftools phone-only" id="ftools">
+      <b data-tool="select">☝</b><b data-tool="rect">▭</b><b data-tool="circle">◯</b><b data-tool="box">▦</b>
+    </div>
+    <div id="walk" hidden>
+      <div class="pad"><b data-w="fwd">▲</b><b data-w="left">◀</b><b data-w="back">▼</b><b data-w="right">▶</b></div>
+      <div class="pad2"><b data-w="turnL">⟲</b><b data-w="turnR">⟳</b><b data-w="up">上</b><b data-w="down">下</b></div>
+    </div>
+    <div class="maphint pc-only" id="hint3d">左ドラッグ：動かす　右ドラッグ：回す・傾ける　ホイール：寄る　目線では W A S D で歩く・Q E で向き・Z X で高さ</div>
+  </div>
+  <div id="maptop" class="mapbox pc-only">
+    <div class="ftools" id="ftoolsPC">
+      <b data-tool="select">☝ 選ぶ</b><b data-tool="rect">▭ 四角 <kbd>R</kbd></b><b data-tool="circle">◯ 丸 <kbd>C</kbd></b><b data-tool="box">▦ 格子 <kbd>G</kbd></b>
+    </div>
+    <div class="maphint">ドラッグで描く・角や印で調整　<kbd>Del</kbd> 消す　<kbd>Ctrl</kbd>+<kbd>D</kbd> 複製　<kbd>Esc</kbd> 選ぶ道具へ</div>
+  </div>
+</main>
+<div id="toast"></div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
