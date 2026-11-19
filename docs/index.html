@@ -16,6 +16,7 @@
     <div id="results"></div>
   </div>
   <button id="locate" class="ib" title="現在地へ（位置はこの端末の中でだけ使います）">📍<span class="pc-only"> 現在地</span></button>
+  <button id="favAdd" class="ib" title="今映っている場所をお気に入りに登録">☆<span class="pc-only"> 登録</span></button>
   <div class="seg" id="viewseg"><b data-v="top">真上</b><b data-v="oblique">見下ろし</b><b data-v="eye">目線</b></div>
   <div class="pc-only hgt" id="hgt">高さ <input id="eyeh" type="number" min="1" max="500" step="5"> m</div>
   <div class="pc-only" style="margin-left:auto;display:flex;gap:8px">
@@ -32,6 +33,9 @@
         <div id="placeName" class="big">—</div>
         <div id="placeSub" class="mu"></div>
         <div class="kv"><span>近く 500m の建物</span><b id="nearCount">—</b></div>
+        <div class="cap"><span>お気に入り</span><span id="favCount"></span></div>
+        <button class="ib wide" id="favAdd2">☆ 今映っている場所を登録</button>
+        <div id="favList"></div>
         <div class="cap">表示</div>
         <div class="row"><span>地図</span><div class="seg sm" id="baseseg"><b data-b="map">地図</b><b data-b="photo">写真</b></div></div>
         <div class="row"><span>地形の起伏</span><label class="sw"><input type="checkbox" id="terrainOn"><i></i></label></div>

@@ -21,7 +21,7 @@ const DEF = {
   view: {center: [139.7005, 35.6595], zoom: 16.4, bearing: -20, pitch: 58}, mode: "oblique",
   place: {name: "渋谷スクランブル交差点", c: [139.7005, 35.6595]},
   base: "photo", terrain: true, trees: true, fog: 1, eyeH: 60, gridLevel: 4, showGrid: true,
-  outside: "none", outsideR: 2000, shapes: [], nextId: 1, near: true, look: true, moveQ: 0.5, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
+  outside: "none", outsideR: 2000, shapes: [], favs: [], nextId: 1, near: true, look: true, moveQ: 0.5, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
 };
 let S;
 try { S = Object.assign(clone(DEF), JSON.parse(localStorage.getItem("rokehan") || "{}")); } catch { S = clone(DEF); }
@@ -790,6 +790,46 @@ function setPlace(name, c) {
 }
 setPlace(S.place.name, S.place.c);
 
+// ------------------------------------------------------------------ favourites: the camera as it is now (position, height, direction, tilt)
+// Kept in this browser (with the other settings) and in the range file, so they go between the phone and the PC too.
+function addFav() {
+  const c = getCam(), look = lookPoint();
+  const nearPlace = S.place && S.place.name !== "現在地" && G.dist(S.place.c, look) < 500;
+  const def = nearPlace ? S.place.name : `お気に入り ${S.favs.length + 1}`;
+  const name = prompt("お気に入りの名前", def);
+  if (name === null) return;
+  const r = v => Math.round(v * 1e6) / 1e6;
+  S.favs.unshift({id: "f" + Date.now().toString(36), name: name.trim() || def, cam: {p: [r(c.p[0]), r(c.p[1])], alt: Math.round(c.alt * 10) / 10,
+    b: Math.round(c.b * 10) / 10, t: Math.round(c.t * 10) / 10, h: Math.round(heightAbove(c) * 10) / 10}, look: [r(look[0]), r(look[1])], mode: S.mode, saved: new Date().toISOString()});
+  save(); renderFavs();
+  toast(`「${S.favs[0].name}」を登録しました`);
+}
+function goFav(f) {
+  const c = f.cam;
+  setPlace(f.name, f.look || c.p);
+  if (f.mode) setMode(f.mode, true);
+  setCam(c.p, c.alt, c.b, c.t);
+  if (mapT) mapT.jumpTo({center: f.look || c.p, zoom: Math.max(mapT.getZoom(), 15.2)});
+  if (!PC) $("#panel").classList.add("min");
+}
+function renderFavs() {
+  $("#favCount").textContent = S.favs.length ? `${S.favs.length} か所` : "";
+  $("#favList").innerHTML = S.favs.length ? S.favs.map(f => `<div class="it" data-id="${esc(f.id)}">
+    <div class="ic">☆</div><div><div class="nm">${esc(f.name)}</div><div class="ds">${f.cam.h != null ? `高さ ${Math.round(f.cam.h)}m` : `標高 ${Math.round(f.cam.alt)}m`}・傾き ${Math.round(f.cam.t)}°</div></div>
+    <b class="fb" data-act="ren" title="名前を変える">✎</b><b class="fb" data-act="del" title="消す">✕</b></div>`).join("")
+    : `<div class="empty">まだありません。「☆」で今映っている場所を登録できます。</div>`;
+}
+$("#favList").addEventListener("click", e => {
+  const it = e.target.closest(".it"); if (!it) return;
+  const f = S.favs.find(x => x.id === it.dataset.id); if (!f) return;
+  const act = e.target.closest("[data-act]") && e.target.closest("[data-act]").dataset.act;
+  if (act === "ren") { const n = prompt("お気に入りの名前", f.name); if (n !== null && n.trim()) { f.name = n.trim(); save(); renderFavs(); } return; }
+  if (act === "del") { if (confirm(`「${f.name}」をお気に入りから消しますか？`)) { S.favs = S.favs.filter(x => x !== f); save(); renderFavs(); } return; }
+  goFav(f);
+});
+for (const id of ["#favAdd", "#favAdd2"]) $(id).addEventListener("click", addFav);
+renderFavs();
+
 // ------------------------------------------------------------------ search and current position
 async function search(q) {
   const box = $("#results");
@@ -843,7 +883,7 @@ async function deliver(blob, name, label) {
   p.textContent = "pCloud の受け取りフォルダ（_Rokehan）に保存してください。PC で Claude が Blender で組み立てます。";
   box.appendChild(p);
 }
-function rangesFile() { return {app: "haikei-rokehan", version: 1, saved: new Date().toISOString(), place: S.place, view: S.view, outside: S.outside, outsideR: S.outsideR, shapes: S.shapes}; }
+function rangesFile() { return {app: "haikei-rokehan", version: 1, saved: new Date().toISOString(), place: S.place, view: S.view, outside: S.outside, outsideR: S.outsideR, shapes: S.shapes, favs: S.favs}; }
 async function saveRanges() {
   setTab("export");
   const blob = new Blob([JSON.stringify(rangesFile(), null, 1)], {type: "application/json"});
@@ -857,6 +897,9 @@ function openRanges(text) {
     S.shapes = j.shapes; S.nextId = Math.max(S.nextId, ...j.shapes.map(s => +String(s.id).replace(/\D/g, "") + 1 || 1));
     if (j.outside) S.outside = j.outside; if (j.outsideR) S.outsideR = j.outsideR;
     if (j.place) setPlace(j.place.name, j.place.c);
+    let nf = 0;                                      // favourites in the file are added (the ones already here stay)
+    for (const f of Array.isArray(j.favs) ? j.favs : []) if (f && f.cam && !S.favs.some(g => g.id === f.id)) { S.favs.push(f); nf++; }
+    if (nf) renderFavs();
     sel = null; save(); renderShapes();
     const all = G.bboxOf(S.shapes.flatMap(ringOf));
     if (S.shapes.length) maps.forEach(m => m.fitBounds([[all[0], all[1]], [all[2], all[3]]], {padding: 50, duration: 600}));
