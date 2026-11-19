@@ -1,14 +1,14 @@
 // 背景ロケハン: pick a place in 3D, place ranges (rect / circle / mesh grid), export the data for Blender.
 // One page for phone and PC: the PC layout adds a top-down map next to the 3D view.
-import * as G from "./lib/geo.js?v=202611192358";
-import { registerGsiDem } from "./lib/gsidem.js?v=202611192358";
-import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611192358";
-import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611192358";
-import { omtArea } from "./lib/omttile.js?v=202611192358";
-import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611192358";
-import { photoMask } from "./lib/phototrees.js?v=202611192358";
-import { placeName } from "./lib/gsiname.js?v=202611192358";
-import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611192358";
+import * as G from "./lib/geo.js?v=202611200008";
+import { registerGsiDem } from "./lib/gsidem.js?v=202611200008";
+import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611200008";
+import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200008";
+import { omtArea } from "./lib/omttile.js?v=202611200008";
+import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200008";
+import { photoMask } from "./lib/phototrees.js?v=202611200008";
+import { placeName } from "./lib/gsiname.js?v=202611200008";
+import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200008";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const PC = matchMedia("(min-width: 900px)").matches;
@@ -237,15 +237,16 @@ function pan(dxPx, dyPx) {                         // move the camera level with
 }
 
 // Two fingers on the phone: move the camera across the screen. Left-right: the scene follows the fingers (as pan above).
-// Up-down: the camera goes the way the fingers go (2026-11-19 user request: slide up = pan up, slide down = pan down),
-// along the screen's own up direction (straight up when looking level, forward when looking straight down).
+// Up-down: the scene follows the fingers too, so the camera goes the other way (2026-11-20 user request: slide up =
+// pan down, slide down = pan up), along the screen's own up direction (straight up and down when looking level,
+// forward and back when looking straight down).
 function panView(dxPx, dyPx) { const n = panViewFrom(getCam(), dxPx, dyPx); setCam(n.p, n.alt, n.b, n.t); }
 function panViewFrom(c, dxPx, dyPx) {
   const cv = map3.getCanvas(), ctc = map3.transform.cameraToCenterDistance || cv.clientHeight * 1.5;
   const h = Math.max(2, Math.abs(heightAbove(c)));
   const D = c.t < 84 ? h / Math.max(0.15, Math.cos(c.t * RAD)) : h * 6;
   const mpp = D / ctc;
-  const right = -dxPx * mpp, up = -dyPx * mpp;
+  const right = -dxPx * mpp, up = dyPx * mpp;
   const fwd = up * Math.cos(c.t * RAD), rise = up * Math.sin(c.t * RAD);
   const b = c.b * RAD;
   return {p: G.offset(c.p, right * Math.cos(b) + fwd * Math.sin(b), -right * Math.sin(b) + fwd * Math.cos(b)), alt: c.alt + rise, b: c.b, t: c.t};
@@ -631,7 +632,7 @@ async function loadNear(force) {
 let detail = null, detailLoading = null;
 function ensureDetail() {
   if (detail) return Promise.resolve(detail);
-  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611192358").then(m => m.createDetail(map3, ROAD)).then(d => {
+  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200008").then(m => m.createDetail(map3, ROAD)).then(d => {
     map3.addLayer(d.layer, map3.getLayer("grid") ? "grid" : undefined);
     return (detail = d);
   }).catch(e => { console.warn("detail", e); toast("細かい見た目を読み込めませんでした（通信を確かめてください）"); detailLoading = null; return null; });
@@ -979,7 +980,7 @@ window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, get
 // GitHub Pages lets a browser keep each file for 10 minutes, and phones keep a page open for days. tools/stamp.py puts
 // the same version on every file URL and in version.json; when version.json says a newer one is out, the page reloads
 // into it once (at the start, and when you come back to the page after a minute or more away).
-const APP_VERSION = "202611192358";
+const APP_VERSION = "202611200008";
 let hiddenAt = 0;
 async function checkVersion() {
   if (!APP_VERSION || exporting) return;

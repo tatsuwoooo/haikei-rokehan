@@ -3,7 +3,7 @@
 //   circle: {kind:"circle", c:[lon,lat], r (m)}
 //   box:    {kind:"box", b:[w,s,e,n]}  -- snapped to the standard area mesh grid
 // Every range also has id, name, level ("detail" | "mid" | "far" | "none").
-import { offset, delta, meshBounds, meshCode, meshStep } from "./geo.js?v=202611192358";
+import { offset, delta, meshBounds, meshCode, meshStep } from "./geo.js?v=202611200008";
 
 export const LEVELS = {
   detail: {label: "詳細", color: "#f39a2b", rank: 3},
