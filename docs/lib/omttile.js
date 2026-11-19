@@ -1,8 +1,8 @@
 // OpenFreeMap (OpenMapTiles) z14 tiles read directly, for the detailed view near the camera.
 // Unlike map.querySourceFeatures(), this does not depend on which tiles happen to be on screen, and each feature
 // is cut exactly to its tile square, so nothing is counted twice where tiles overlap.
-import { decodeTile, polygons } from "./mvt.js";
-import * as G from "./geo.js";
+import { decodeTile, polygons } from "./mvt.js?v=202611192358";
+import * as G from "./geo.js?v=202611192358";
 
 const cache = new Map();          // url -> Promise<{roads, buildings, green}>
 

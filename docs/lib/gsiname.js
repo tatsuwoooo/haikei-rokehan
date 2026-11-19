@@ -2,9 +2,9 @@
 // The same tiles the 3D view already reads for the building kinds, so no position is sent anywhere new.
 //   210 = town / 町丁目 ("三軒茶屋（一）"), 422 = station, 534 = park, 661 / 662 = shrine / temple, 312 = mountain,
 //   110 = city / ward, 140 = prefecture.
-import { decodeTile } from "./mvt.js";
-import * as G from "./geo.js";
-import { GSI_BLDG_TILE } from "./gsibldg.js";
+import { decodeTile } from "./mvt.js?v=202611192358";
+import * as G from "./geo.js?v=202611192358";
+import { GSI_BLDG_TILE } from "./gsibldg.js?v=202611192358";
 
 const chome = s => s.replace(/（([一二三四五六七八九十]+)）$/, "$1丁目");
 

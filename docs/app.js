@@ -1,14 +1,14 @@
 // 背景ロケハン: pick a place in 3D, place ranges (rect / circle / mesh grid), export the data for Blender.
 // One page for phone and PC: the PC layout adds a top-down map next to the 3D view.
-import * as G from "./lib/geo.js";
-import { registerGsiDem } from "./lib/gsidem.js";
-import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js";
-import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js";
-import { omtArea } from "./lib/omttile.js";
-import { ROAD, autoProps, treesFor } from "./lib/props.js";
-import { photoMask } from "./lib/phototrees.js";
-import { placeName } from "./lib/gsiname.js";
-import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js";
+import * as G from "./lib/geo.js?v=202611192358";
+import { registerGsiDem } from "./lib/gsidem.js?v=202611192358";
+import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611192358";
+import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611192358";
+import { omtArea } from "./lib/omttile.js?v=202611192358";
+import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611192358";
+import { photoMask } from "./lib/phototrees.js?v=202611192358";
+import { placeName } from "./lib/gsiname.js?v=202611192358";
+import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611192358";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const PC = matchMedia("(min-width: 900px)").matches;
@@ -631,7 +631,7 @@ async function loadNear(force) {
 let detail = null, detailLoading = null;
 function ensureDetail() {
   if (detail) return Promise.resolve(detail);
-  if (!detailLoading) detailLoading = import("./lib/scene3d.js").then(m => m.createDetail(map3, ROAD)).then(d => {
+  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611192358").then(m => m.createDetail(map3, ROAD)).then(d => {
     map3.addLayer(d.layer, map3.getLayer("grid") ? "grid" : undefined);
     return (detail = d);
   }).catch(e => { console.warn("detail", e); toast("細かい見た目を読み込めませんでした（通信を確かめてください）"); detailLoading = null; return null; });
@@ -974,3 +974,26 @@ document.addEventListener("keydown", e => {
 setTool("select");
 renderList(); renderSel(); renderEstimate();
 window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, getCam, dolly, orbitStart, orbitTo, pan, panView, groundAt, map3, loadNear, loadOsm, get detail() { return detail; }, get sel() { return sel; }};
+
+// ------------------------------------------------------------------ newer version
+// GitHub Pages lets a browser keep each file for 10 minutes, and phones keep a page open for days. tools/stamp.py puts
+// the same version on every file URL and in version.json; when version.json says a newer one is out, the page reloads
+// into it once (at the start, and when you come back to the page after a minute or more away).
+const APP_VERSION = "202611192358";
+let hiddenAt = 0;
+async function checkVersion() {
+  if (!APP_VERSION || exporting) return;
+  try {
+    const v = (await (await fetch("version.json?t=" + Date.now(), {cache: "no-store"})).json()).v;
+    if (!v || v === APP_VERSION || sessionStorage.getItem("rokehanReload") === v) return;
+    sessionStorage.setItem("rokehanReload", v);
+    try { localStorage.setItem("rokehan", JSON.stringify(S)); } catch {}
+    toast("新しい版に更新します…");
+    setTimeout(() => location.replace(location.pathname + "?v=" + v + location.hash), 600);
+  } catch {}
+}
+checkVersion();
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) hiddenAt = Date.now();
+  else if (hiddenAt && Date.now() - hiddenAt > 60000) checkVersion();
+});
