@@ -189,20 +189,20 @@ function dolly(dist, sx, sy) {
   setCam(G.offset(c.p, horiz * Math.sin(b * RAD), horiz * Math.cos(b * RAD)), c.alt + up, c.b, c.t);
 }
 const dollyStep = () => Math.max(1.5, Math.abs(heightAbove(getCam())));     // slower close to the ground, never zero
-// Turn the view (one finger on the phone): always orbit around the point you look at, at any height.
-// The point is where the view meets the ground (at most 4 km away); looking level or up, a point a little ahead.
-// If orbiting would take the camera under the ground, it stays where it is and looks around instead
-// (so at street level, dragging up looks up at the buildings).
-function turn(db, dt) {
+// Orbit, the same feel as どこでもロケハン (three.js OrbitControls): the point you look at is fixed when the drag starts,
+// and the camera goes round it. Dragging the height of the screen turns it once around; dragging right turns the scene
+// with the finger, dragging down looks more from above. It may go under the ground (「地上に戻る」 brings it back).
+function orbitStart() {
   const c = getCam(), h = heightAbove(c);
   const D = (c.t < 84 && h > 0) ? Math.min(h / Math.cos(c.t * RAD), 4000) : Math.max(12, Math.min(Math.abs(h) * 1.5, 400));
   const ph = D * Math.sin(c.t * RAD);
-  const pivot = G.offset(c.p, ph * Math.sin(c.b * RAD), ph * Math.cos(c.b * RAD)), pivotAlt = c.alt - D * Math.cos(c.t * RAD);
-  const b = c.b + db, t = Math.max(0, Math.min(150, c.t + dt));
-  const nh = D * Math.sin(t * RAD);
-  const p = G.offset(pivot, -nh * Math.sin(b * RAD), -nh * Math.cos(b * RAD)), alt = pivotAlt + D * Math.cos(t * RAD);
-  if (h > 0 && alt < groundAt(p) + 1) setCam(c.p, c.alt, b, t);
-  else setCam(p, alt, b, t, D);
+  return {pivot: G.offset(c.p, ph * Math.sin(c.b * RAD), ph * Math.cos(c.b * RAD)), pivotAlt: c.alt - D * Math.cos(c.t * RAD), D, b: c.b, t: c.t};
+}
+function orbitTo(o, dxPx, dyPx) {
+  const H = map3.getCanvas().clientHeight || 600;
+  const b = o.b - 360 * dxPx / H, t = Math.max(0, Math.min(150, o.t - 360 * dyPx / H));
+  const nh = o.D * Math.sin(t * RAD);
+  setCam(G.offset(o.pivot, -nh * Math.sin(b * RAD), -nh * Math.cos(b * RAD)), o.pivotAlt + o.D * Math.cos(t * RAD), b, t, o.D);
 }
 function pan(dxPx, dyPx) {                         // move the camera level with the ground, like dragging the map
   const c = getCam(), cv = map3.getCanvas(), ctc = map3.transform.cameraToCenterDistance || cv.clientHeight * 1.5;
@@ -228,17 +228,19 @@ let editingNow = false;                            // set while the range editor
 (function touchCamera() {
   if (PC) return;
   const el = map3.getCanvasContainer();
-  let last = null;
+  let last = null, orb = null;
   const pts = e => [...e.touches].map(t => { const r = el.getBoundingClientRect(); return [t.clientX - r.left, t.clientY - r.top]; });
-  el.addEventListener("touchstart", e => { last = pts(e); const h = $("#hintPhone"); if (h) setTimeout(() => h.remove(), 2500); }, {passive: true});
+  el.addEventListener("touchstart", e => { last = pts(e); orb = null; const h = $("#hintPhone"); if (h) setTimeout(() => h.remove(), 2500); }, {passive: true});
   el.addEventListener("touchmove", e => {
-    if (editingNow) { last = pts(e); return; }
+    if (editingNow) { last = pts(e); orb = null; return; }
     const now = pts(e);
     if (!last || now.length !== last.length) { last = now; return; }
     e.preventDefault();
     if (now.length === 1) {
-      turn(-(now[0][0] - last[0][0]) * 0.28, (now[0][1] - last[0][1]) * 0.22);   // the view follows the finger, like Street View
+      if (!orb) orb = {o: orbitStart(), x: last[0][0], y: last[0][1]};
+      orbitTo(orb.o, now[0][0] - orb.x, now[0][1] - orb.y);
     } else if (now.length >= 2) {
+      orb = null;
       const mid = a => [(a[0][0] + a[1][0]) / 2, (a[0][1] + a[1][1]) / 2], gap = a => Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]);
       const m0 = mid(last), m1 = mid(now), g0 = gap(last), g1 = gap(now);
       if (Math.abs(m1[0] - m0[0]) + Math.abs(m1[1] - m0[1]) > 0.5) pan(m1[0] - m0[0], m1[1] - m0[1]);
@@ -246,7 +248,29 @@ let editingNow = false;                            // set while the range editor
     }
     last = now;
   }, {passive: false});
-  el.addEventListener("touchend", e => { last = pts(e); }, {passive: true});
+  el.addEventListener("touchend", e => { last = pts(e); orb = null; }, {passive: true});
+})();
+
+// mouse (PC): left drag = orbit (as above), right drag = move. MapLibre's own dragging is switched off.
+(function mouseCamera() {
+  if (!PC) return;
+  map3.dragPan.disable(); map3.dragRotate.disable();
+  const el = map3.getCanvasContainer();
+  let d = null;
+  el.addEventListener("contextmenu", e => e.preventDefault());
+  el.addEventListener("mousedown", e => {
+    if (e.button !== 0 && e.button !== 2) return;
+    d = {btn: e.button, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, on: false, o: null};
+  });
+  addEventListener("mousemove", e => {
+    if (!d) return;
+    if (editingNow) { d = null; return; }               // a range is being drawn or moved
+    if (!d.on) { if (Math.abs(e.clientX - d.x0) + Math.abs(e.clientY - d.y0) < 3) return; d.on = true; if (d.btn === 0) d.o = orbitStart(); }
+    if (d.btn === 0) orbitTo(d.o, e.clientX - d.x0, e.clientY - d.y0);
+    else pan(e.clientX - d.x, e.clientY - d.y);
+    d.x = e.clientX; d.y = e.clientY;
+  });
+  addEventListener("mouseup", () => { d = null; });
 })();
 
 // height / tilt readout and "back above the ground"
@@ -856,4 +880,4 @@ document.addEventListener("keydown", e => {
 
 setTool("select");
 renderList(); renderSel(); renderEstimate();
-window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, getCam, dolly, turn, pan, groundAt, map3, loadNear, loadOsm, get detail() { return detail; }, get sel() { return sel; }};
+window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, getCam, dolly, orbitStart, orbitTo, pan, groundAt, map3, loadNear, loadOsm, get detail() { return detail; }, get sel() { return sel; }};
