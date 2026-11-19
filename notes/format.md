@@ -25,7 +25,7 @@ rokehan_<場所>_<日時>.zip
 | `zone`, `prefecture` | 平面直角座標系の系、都道府県コード（分からなければ null） |
 | `origin.plane` | ローカル座標の原点（系の座標 [東, 北]、10m 単位に丸め） |
 | `settings` | `{outside: "none"|"far", outsideR, terrain}` |
-| `ranges[]` | ユーザーが置いた範囲。`{id, name, level, kind, outside, ring_lonlat, ring_local, shape}`。`outside: true` は「範囲の外を板ポリにする」で作った丸 |
+| `ranges[]` | ユーザーが置いた範囲。`{id, name, level, kind, outside, ring_lonlat, ring_local, shape}`。`kind` は rect（四角）・circle（丸）・fan（扇）・box（格子）。扇の `shape` は `{c: 要の経緯度, r: 半径 m, dir: 向き（度。北 0、時計回り）, spread: 開き（度）}`。区画分けや建物の振り分けは、どの形でも `ring` で行う。`outside: true` は「範囲の外を板ポリにする」で作った丸 |
 | `sections[]` | 区画。`{id, level, mesh, bounds (lon/lat), bounds_local [w,s,e,n], ranges[], file, counts, terrain[]}` |
 | `terrain` | 標高タイルの一覧 `{file, src, z, x, y}` と符号化の説明 |
 | `attribution` | 出典（作品に使うときに表記する） |

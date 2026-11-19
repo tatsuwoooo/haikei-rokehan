@@ -1,14 +1,14 @@
 // 背景ロケハン: pick a place in 3D, place ranges (rect / circle / mesh grid), export the data for Blender.
 // One page for phone and PC: the PC layout adds a top-down map next to the 3D view.
-import * as G from "./lib/geo.js?v=202611200022";
-import { registerGsiDem } from "./lib/gsidem.js?v=202611200022";
-import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611200022";
-import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200022";
-import { omtArea } from "./lib/omttile.js?v=202611200022";
-import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200022";
-import { photoMask } from "./lib/phototrees.js?v=202611200022";
-import { placeName } from "./lib/gsiname.js?v=202611200022";
-import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200022";
+import * as G from "./lib/geo.js?v=202611200034";
+import { registerGsiDem } from "./lib/gsidem.js?v=202611200034";
+import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611200034";
+import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200034";
+import { omtArea } from "./lib/omttile.js?v=202611200034";
+import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200034";
+import { photoMask } from "./lib/phototrees.js?v=202611200034";
+import { placeName } from "./lib/gsiname.js?v=202611200034";
+import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200034";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const PC = matchMedia("(min-width: 900px)").matches;
@@ -427,6 +427,7 @@ function setTool(t) {
   $$("[data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === t));
   const hints = {select: "範囲をタップして選ぶ。角の印で大きさ、青い丸で回転、中をドラッグで移動。",
     rect: "地図をなぞって四角を置きます（タップだけなら 200×120m）。", circle: "中心からなぞって丸を置きます（タップだけなら半径 150m）。",
+    fan: "要（かなめ）の点から、広げたい向きへなぞって扇を置きます（開きは 60°。タップだけなら、見ている向きへ半径 300m）。先の印で長さと向き、両端の印で開きを変えます。",
     box: "なぞった所の格子をまとめて選びます（タップで 1 マス）。"};
   $("#toolHint").textContent = hints[t];
   if (t === "box" && !S.showGrid) { S.showGrid = true; $("#gridOn").checked = true; renderGrid(); }
@@ -486,6 +487,7 @@ function attachEditor(m) {
       if (!d.moved || G.dist(d.start, p) < 5) {
         if (tool === "rect") sh = drawShape("rect", G.offset(d.start, -100, -60), G.offset(d.start, 100, 60), 0, S.gridLevel), sh.ang = Math.round(-m.getBearing() * 10) / 10;
         else if (tool === "circle") sh = {kind: "circle", c: d.start, r: 150};
+        else if (tool === "fan") sh = {kind: "fan", c: d.start, r: 300, dir: Math.round(((m.getBearing() % 360) + 360) % 360 * 10) / 10, spread: 60};
         else sh = drawShape("box", d.start, d.start, 0, S.gridLevel);
       } else sh = drawShape(tool, d.start, p, m.getBearing(), S.gridLevel);
       addShape(sh);
@@ -633,7 +635,7 @@ async function loadNear(force) {
 let detail = null, detailLoading = null;
 function ensureDetail() {
   if (detail) return Promise.resolve(detail);
-  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200022").then(m => m.createDetail(map3, ROAD)).then(d => {
+  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200034").then(m => m.createDetail(map3, ROAD)).then(d => {
     map3.addLayer(d.layer, map3.getLayer("grid") ? "grid" : undefined);
     return (detail = d);
   }).catch(e => { console.warn("detail", e); toast("細かい見た目を読み込めませんでした（通信を確かめてください）"); detailLoading = null; return null; });
@@ -703,13 +705,13 @@ function countNear() {
 }
 
 // ------------------------------------------------------------------ panel: list, selected range, estimate
-const KIND_ICON = {rect: "▭", circle: "◯", box: "▦"};
+const KIND_ICON = {rect: "▭", circle: "◯", box: "▦", fan: "◔"};
 function renderList() {
   $("#rangeCount").textContent = S.shapes.length ? `${S.shapes.length} つ` : "";
   $("#list").innerHTML = S.shapes.length ? S.shapes.map(sh => `<div class="it${sh.id === sel ? " sel" : ""}" data-id="${sh.id}">
     <div class="ic">${KIND_ICON[sh.kind]}</div><div><div class="nm">${esc(sh.name)}</div><div class="ds">${sizeText(sh)}</div></div>
     <span class="chip" style="background:${colorOf(sh)};${sh.level === "detail" ? "" : "color:#fff"}">${LEVELS[sh.level].label}</span></div>`).join("")
-    : `<div class="empty">まだありません。上の「四角・丸・格子」で地図に置いてください。</div>`;
+    : `<div class="empty">まだありません。上の「四角・丸・扇・格子」で地図に置いてください。</div>`;
 }
 $("#list").addEventListener("click", e => {
   const it = e.target.closest(".it"); if (!it) return;
@@ -724,6 +726,9 @@ function renderSel() {
   if (sh.kind === "rect") size = `<div class="row"><span>大きさ</span><span><input type="number" data-f="w" value="${Math.round(sh.w)}"> × <input type="number" data-f="h" value="${Math.round(sh.h)}"> m</span></div>
     <div class="row"><span>向き</span><span><input type="number" data-f="ang" value="${sh.ang}"> °</span></div>`;
   else if (sh.kind === "circle") size = `<div class="row"><span>半径</span><span><input type="number" data-f="r" value="${Math.round(sh.r)}"> m</span></div>`;
+  else if (sh.kind === "fan") size = `<div class="row"><span>半径</span><span><input type="number" data-f="r" value="${Math.round(sh.r)}"> m</span></div>
+    <div class="row"><span>向き（北 0・東 90）</span><span><input type="number" data-f="dir" value="${Math.round(sh.dir)}"> °</span></div>
+    <div class="row"><span>開き</span><span><input type="number" data-f="spread" value="${Math.round(sh.spread)}"> °</span></div>`;
   else { const [w, h] = boxSize(sh); size = `<div class="row"><span>大きさ</span><b>${fmtM(w)} × ${fmtM(h)}</b></div>`; }
   $("#selbox").innerHTML = `<div class="row"><input type="text" data-f="name" value="${esc(sh.name)}"></div>
     <div class="seg" id="lvseg">${Object.entries(LEVELS).map(([k, v]) => `<b class="lv-${k}${sh.level === k ? " on" : ""}" data-lv="${k}">${v.label}</b>`).join("")}</div>
@@ -741,7 +746,10 @@ $("#selbox").addEventListener("click", e => {
 $("#selbox").addEventListener("change", e => {
   const sh = S.shapes.find(x => x.id === sel), f = e.target.dataset.f; if (!sh || !f) return;
   if (f === "name") sh.name = e.target.value.trim() || sh.name;
-  else { const v = parseFloat(e.target.value); if (isFinite(v)) sh[f] = f === "ang" ? v : Math.max(20, v); }
+  else {
+    const v = parseFloat(e.target.value);
+    if (isFinite(v)) sh[f] = f === "ang" ? v : f === "dir" ? ((v % 360) + 360) % 360 : f === "spread" ? Math.max(5, Math.min(360, v)) : Math.max(20, v);
+  }
   save(); renderShapes();
 });
 function delShape() { S.shapes = S.shapes.filter(x => x.id !== sel); sel = null; save(); renderShapes(); }
@@ -968,7 +976,7 @@ document.addEventListener("keydown", e => {
   if (!e.ctrlKey && !e.metaKey && !e.altKey) {
     const walkKeys = {w: "fwd", s: "back", a: "left", d: "right", q: "turnL", e: "turnR", z: "up", x: "down", arrowup: "fwd", arrowdown: "back", arrowleft: "turnL", arrowright: "turnR"};
     if (walkKeys[k]) { e.preventDefault(); walk(walkKeys[k], e.shiftKey); return; }
-    if (k === "r") setTool("rect"); else if (k === "c") setTool("circle"); else if (k === "g") setTool("box"); else if (k === "v") setTool("select");
+    if (k === "r") setTool("rect"); else if (k === "c") setTool("circle"); else if (k === "g") setTool("box"); else if (k === "t") setTool("fan"); else if (k === "v") setTool("select");
     else if (k === "f") { map3.easeTo({center: S.place.c, duration: 600}); }
   }
 });
@@ -981,7 +989,7 @@ window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, get
 // GitHub Pages lets a browser keep each file for 10 minutes, and phones keep a page open for days. tools/stamp.py puts
 // the same version on every file URL and in version.json; when version.json says a newer one is out, the page reloads
 // into it once (at the start, and when you come back to the page after a minute or more away).
-const APP_VERSION = "202611200022";
+const APP_VERSION = "202611200034";
 let hiddenAt = 0;
 async function checkVersion() {
   if (!APP_VERSION || exporting) return;

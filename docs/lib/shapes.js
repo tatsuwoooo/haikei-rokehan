@@ -2,8 +2,10 @@
 //   rect:   {kind:"rect", c:[lon,lat], w, h (m), ang (deg, counter-clockwise from east)}
 //   circle: {kind:"circle", c:[lon,lat], r (m)}
 //   box:    {kind:"box", b:[w,s,e,n]}  -- snapped to the standard area mesh grid
+//   fan:    {kind:"fan", c:[lon,lat] the point it opens from, r (m), dir (deg, compass: 0 = north, clockwise),
+//            spread (deg, the whole opening, 5..360)}
 // Every range also has id, name, level ("detail" | "mid" | "far" | "none").
-import { offset, delta, meshBounds, meshCode, meshStep } from "./geo.js?v=202611200022";
+import { offset, delta, meshBounds, meshCode, meshStep } from "./geo.js?v=202611200034";
 
 export const LEVELS = {
   detail: {label: "詳細", color: "#f39a2b", rank: 3},
@@ -12,6 +14,10 @@ export const LEVELS = {
   none: {label: "作らない", color: "#8a8c99", rank: 0},
 };
 
+const RAD = Math.PI / 180;
+const brg = (a, p) => { const d = delta(a, p); return Math.atan2(d[0], d[1]) / RAD; };          // compass bearing a -> p
+const along = (c, r, deg) => offset(c, r * Math.sin(deg * RAD), r * Math.cos(deg * RAD));
+const norm180 = d => ((d % 360) + 540) % 360 - 180;
 const rot = (x, y, deg) => { const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a); return [x * c - y * s, x * s + y * c]; };
 
 export function ringOf(sh) {                       // closed ring [[lon,lat],...]
@@ -21,6 +27,12 @@ export function ringOf(sh) {                       // closed ring [[lon,lat],...
     return out;
   }
   if (sh.kind === "box") { const [w, s, e, n] = sh.b; return [[w, s], [e, s], [e, n], [w, n], [w, s]]; }
+  if (sh.kind === "fan") {
+    const n = Math.max(4, Math.ceil(sh.spread / 2.5)), out = sh.spread >= 360 ? [] : [sh.c];
+    for (let i = 0; i <= n; i++) out.push(along(sh.c, sh.r, sh.dir - sh.spread / 2 + sh.spread * i / n));
+    out.push(out[0]);
+    return out;
+  }
   const pts = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => offset(sh.c, ...rot(u * sh.w / 2, v * sh.h / 2, sh.ang)));
   return [...pts, pts[0]];
 }
@@ -34,6 +46,7 @@ export const centerOf = sh => sh.kind === "box" ? [(sh.b[0] + sh.b[2]) / 2, (sh.
 export function sizeText(sh) {
   if (sh.kind === "circle") return `丸 r=${fmtM(sh.r)}`;
   if (sh.kind === "box") { const [w, h] = boxSize(sh); return `格子 ${fmtM(w)}×${fmtM(h)}`; }
+  if (sh.kind === "fan") return `扇 r=${fmtM(sh.r)}・${Math.round(sh.spread)}°`;
   return `四角 ${fmtM(sh.w)}×${fmtM(sh.h)}`;
 }
 export const fmtM = m => m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + "km" : Math.round(m) + "m";
@@ -41,12 +54,15 @@ export function boxSize(sh) { const [w, s, e, n] = sh.b; const d = delta([w, s],
 export function areaOf(sh) {
   if (sh.kind === "circle") return Math.PI * sh.r * sh.r;
   if (sh.kind === "box") { const [w, h] = boxSize(sh); return w * h; }
+  if (sh.kind === "fan") return Math.PI * sh.r * sh.r * Math.min(360, sh.spread) / 360;
   return sh.w * sh.h;
 }
 
 // Handles of a selected range: [{type, p:[lon,lat], i}]
 export function handlesOf(sh) {
   if (sh.kind === "circle") return [{type: "move", p: sh.c}, {type: "radius", p: offset(sh.c, sh.r, 0)}];
+  if (sh.kind === "fan") return [{type: "move", p: sh.c}, {type: "rotate", p: along(sh.c, sh.r, sh.dir)},        // tip: length and direction
+    {type: "spread", p: along(sh.c, sh.r, sh.dir - sh.spread / 2)}, {type: "spread", p: along(sh.c, sh.r, sh.dir + sh.spread / 2)}];
   const ring = ringOf(sh).slice(0, 4), hs = ring.map((p, i) => ({type: "corner", p, i}));
   if (sh.kind === "rect") {
     hs.push({type: "rotate", p: offset(sh.c, ...rot(0, sh.h / 2 + Math.max(20, sh.h * 0.18), sh.ang))});
@@ -66,6 +82,10 @@ export function dragHandle(sh, h, p, start, orig) {
     } else s.c = offset(orig.c, d[0], d[1]);
   } else if (h.type === "radius") {
     s.r = Math.max(20, Math.hypot(...delta(orig.c, p)));
+  } else if (h.type === "rotate" && s.kind === "fan") {
+    s.r = Math.max(20, Math.hypot(...delta(orig.c, p))); s.dir = Math.round(((brg(orig.c, p) % 360) + 360) % 360 * 10) / 10;
+  } else if (h.type === "spread") {
+    s.spread = Math.round(Math.max(5, Math.min(360, 2 * Math.abs(norm180(brg(orig.c, p) - orig.dir)))));
   } else if (h.type === "rotate") {
     const d = delta(orig.c, p);
     s.ang = Math.round((Math.atan2(d[1], d[0]) * 180 / Math.PI - 90) * 10) / 10;
@@ -98,6 +118,7 @@ export function cellBox(lonlat, level) { return meshBounds(meshCode(lonlat[1], l
 // New range drawn from a to b. bearing: map rotation, so a drawn rectangle lines up with the screen.
 export function drawShape(kind, a, b, bearing, gridLevel) {
   if (kind === "circle") return {kind, c: a, r: Math.max(20, Math.hypot(...delta(a, b)))};
+  if (kind === "fan") return {kind, c: a, r: Math.max(20, Math.hypot(...delta(a, b))), dir: Math.round(((brg(a, b) % 360) + 360) % 360 * 10) / 10, spread: 60};
   if (kind === "box") return {kind, gridLevel, b: snapBox([Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])], gridLevel)};
   const ang = -bearing, [vx, vy] = rot(...delta(a, b), -ang);
   const w = Math.max(20, Math.abs(vx)), h = Math.max(20, Math.abs(vy));

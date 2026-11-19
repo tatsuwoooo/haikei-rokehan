@@ -2,8 +2,8 @@
 //   3101 普通建物 (ordinary: mostly wooden houses, small buildings)   3102 堅ろう建物 (concrete / steel)
 //   3103 高層建物 (high-rise)   3111 普通無壁舎, 3112 堅ろう無壁舎 (roof only: carports, bike sheds)
 // Footprints come clipped to each tile; we clip them exactly to the tile square so pieces meet without overlapping.
-import { decodeTile, polygons } from "./mvt.js?v=202611200022";
-import * as G from "./geo.js?v=202611200022";
+import { decodeTile, polygons } from "./mvt.js?v=202611200034";
+import * as G from "./geo.js?v=202611200034";
 
 export const GSI_BLDG_TILE = (z, x, y) => `https://cyberjapandata.gsi.go.jp/xyz/optimal_bvmap-v1/${z}/${x}/${y}.pbf`;
 export const KIND_OF_CODE = {3101: "house", 3102: "building", 3103: "tower", 3111: "shed", 3112: "shed"};
