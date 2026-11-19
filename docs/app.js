@@ -153,7 +153,6 @@ function ready() {
 // (t, degrees: 0 = straight down, 90 = level, more = looking up). MapLibre still needs a "centre": we put it on the
 // line of sight, on the ground when the camera looks down at it, otherwise a short distance ahead in the air.
 const RAD = Math.PI / 180;
-const ORBIT_ABOVE = 30;                           // higher than this above the ground, one finger orbits around the centre
 let wanted = null;                                // the camera we asked for: kept even if MapLibre would lift it out of the ground
 map3.transformCameraUpdate = () => wanted || {};
 const groundAt = p => { if (!S.terrain) return 0; try { return map3.queryTerrainElevation(p) || 0; } catch { return 0; } };
@@ -186,12 +185,20 @@ function dolly(dist, sx, sy) {
   setCam(G.offset(c.p, horiz * Math.sin(b * RAD), horiz * Math.cos(b * RAD)), c.alt + up, c.b, c.t);
 }
 const dollyStep = () => Math.max(1.5, Math.abs(heightAbove(getCam())));     // slower close to the ground, never zero
-// Turn the view: high up, orbit around the centre; close to the ground, look around from where the camera is.
+// Turn the view (one finger on the phone): always orbit around the point you look at, at any height.
+// The point is where the view meets the ground (at most 4 km away); looking level or up, a point a little ahead.
+// If orbiting would take the camera under the ground, it stays where it is and looks around instead
+// (so at street level, dragging up looks up at the buildings).
 function turn(db, dt) {
-  const c = getCam();
-  if (heightAbove(c) > ORBIT_ABOVE && c.t < 89) {
-    map3.jumpTo({bearing: c.b + db, pitch: Math.max(0, Math.min(88, c.t + dt))});
-  } else setCam(c.p, c.alt, c.b + db, Math.max(0, Math.min(150, c.t + dt)));
+  const c = getCam(), h = heightAbove(c);
+  const D = (c.t < 84 && h > 0) ? Math.min(h / Math.cos(c.t * RAD), 4000) : Math.max(12, Math.min(Math.abs(h) * 1.5, 400));
+  const ph = D * Math.sin(c.t * RAD);
+  const pivot = G.offset(c.p, ph * Math.sin(c.b * RAD), ph * Math.cos(c.b * RAD)), pivotAlt = c.alt - D * Math.cos(c.t * RAD);
+  const b = c.b + db, t = Math.max(0, Math.min(150, c.t + dt));
+  const nh = D * Math.sin(t * RAD);
+  const p = G.offset(pivot, -nh * Math.sin(b * RAD), -nh * Math.cos(b * RAD)), alt = pivotAlt + D * Math.cos(t * RAD);
+  if (h > 0 && alt < groundAt(p) + 1) setCam(c.p, c.alt, b, t);
+  else setCam(p, alt, b, t, D);
 }
 function pan(dxPx, dyPx) {                         // move the camera level with the ground, like dragging the map
   const c = getCam(), cv = map3.getCanvas(), ctc = map3.transform.cameraToCenterDistance || cv.clientHeight * 1.5;
