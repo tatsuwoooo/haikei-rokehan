@@ -52,6 +52,12 @@ rokehan_<場所>_<日時>.zip
 - `barriers[]`: `{id, kind: wall|fence|retaining_wall|..., pts, tags}`
 - `power[]`: `{id, kind: line|minor_line, pts}`
 - `points[]`: `{kind, p: [e,n], tags, id}`。kind は tree / street_lamp / traffic_signals / crossing / bus_stop / sign / utility_pole / power_tower / street_cabinet / fire_hydrant / vending_machine / bench / post_box / telephone / bicycle_parking / waste_basket / toilets
+  - `auto: true` の点は、OSM に無いので道の形から自動で置いたもの（3D 表示と同じ決まり。`docs/lib/props.js`）。`a` は向き（度。東が 0、反時計回り）。
+    - `utility_pole`（電柱）: 細い道（minor）と tertiary の片側に約 30m ごと。`a` は道の向き（腕木は道と直角）。
+    - `street_lamp`（街灯）: tertiary 以上に約 34m ごと。`a` は腕が伸びる向き（道の中へ）。
+    - `traffic_signals`（信号）: secondary 以上を含む大きな交差点（または OSM に信号がある交差点）の各方向に1つ。`a` は灯器が向く向き、`arm` は腕の長さ（m）。腕は `a` の左へ伸びる。
+    - `crossing`（横断歩道）: 信号のある交差点の各方向。`a` は道の向き、`w` は道幅（m）、`d` は横断歩道の幅（4m）。
+- `power[]` の `auto: true` は、自動で置いた電柱の間の電線（`minor_line`、2点）。
 
 ### 中景（ベクトルタイル）
 - `buildings[]`: `{fp: [[e,n],...], h, hSrc: "map"|"default"|"kind", minH, kind, gsi}`（用途などのタグは無い。`kind`・`gsi` は詳細と同じ。地図に高さが無いときは種類と面積から推測して `hSrc = "kind"`）

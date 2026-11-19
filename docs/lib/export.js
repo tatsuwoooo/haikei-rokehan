@@ -9,6 +9,8 @@ import { makeZip } from "./zip.js";
 import { GSI_DEM, GSI_DEM5A } from "./gsidem.js";
 import { gsiTile, makeLookup, guessHeight, KIND_OF_CODE } from "./gsibldg.js";
 import { ringOf, bboxOfShape, LEVELS } from "./shapes.js";
+import { autoProps, classOfOsm } from "./props.js";
+import { omtArea } from "./omttile.js";
 
 // Order of tries: the main server gets most of them; the backups are often unreachable, so they get a short limit.
 const OVERPASS_MAIN = "https://overpass-api.de/api/interpreter";
@@ -33,7 +35,7 @@ async function fetchRetry(url, opt = {}, tries = 4) {
   throw last;
 }
 
-async function overpass(q, log) {
+export async function overpass(q, log) {
   let err;
   for (let i = 0; i < OVERPASS_TRIES.length; i++) {
     const [url, secs] = OVERPASS_TRIES[i], host = new URL(url).host;
@@ -262,13 +264,48 @@ export async function exportData({shapes, settings, place, omtTiles, onProgress 
         sec.areas.push({id: el.type[0] + el.id, kind, rings: rings.map(LR), tags: pickTags(t)});
       } else if (line) {
         const rec = {id: "w" + el.id, pts: LR(line), tags: pickTags(t)};
-        if (t.highway) sec.roads.push(Object.assign(rec, {kind: t.highway}));
+        if (t.highway) {
+          sec.roads.push(Object.assign(rec, {kind: t.highway}));
+          const cls = classOfOsm(t.highway);
+          if (cls) (sec._roadsLL || (sec._roadsLL = [])).push({cls, pts: line,
+            brunnel: t.bridge && t.bridge !== "no" ? "bridge" : t.tunnel && t.tunnel !== "no" ? "tunnel" : null});
+        }
         else if (t.railway) sec.rails.push(Object.assign(rec, {kind: t.railway}));
         else if (t.waterway) sec.areas.push({id: rec.id, kind: "waterway_" + t.waterway, line: rec.pts, tags: rec.tags});
         else if (t.barrier) sec.barriers.push(Object.assign(rec, {kind: t.barrier}));
         else if (t.power) sec.power.push(Object.assign(rec, {kind: t.power}));
         else if (t.man_made) sec.areas.push({id: rec.id, kind: t.man_made, line: rec.pts, tags: rec.tags});
       }
+    }
+    // street furniture placed from the road shapes (the same rules as the 3D view); only what stands in this cell
+    if (sec._roadsLL) {
+      const osm = {signals: [], lamps: [], poles: []};
+      for (const el of js.elements || []) {
+        if (el.type !== "node") continue;
+        const t = el.tags || {}, p = [el.lon, el.lat];
+        if (t.highway === "traffic_signals") osm.signals.push(p);
+        else if (t.highway === "street_lamp") osm.lamps.push(p);
+        else if (t.power === "pole" || t.man_made === "utility_pole") osm.poles.push(p);
+      }
+      // roads from the same map tiles as the 3D view, so the poles stand where the browser showed them
+      // (the OpenStreetMap roads of this section are used only if the tiles cannot be read)
+      let roadsForProps = sec._roadsLL;
+      try {
+        const tpl = omtTiles || (await (await fetch(OMT_TILEJSON)).json()).tiles[0];
+        const area = await omtArea(tpl, pad(sec.bounds, 250));
+        if (area.roads.length) roadsForProps = area.roads;
+      } catch {}
+      const ap = autoProps(roadsForProps, osm);
+      const mine = p => rankAt(p)[0] === 3 && G.meshCode(p[1], p[0], 4) === sec.mesh;
+      let na = 0;
+      const add = (list, kind, extra) => { for (const o of list) if (!o.osm && mine(o.p)) { sec.points.push({kind, auto: true, p: L(...o.p), a: r2(o.a), ...extra(o)}); na++; } };
+      add(ap.poles, "utility_pole", () => ({}));
+      add(ap.lamps, "street_lamp", () => ({}));
+      add(ap.signals, "traffic_signals", o => ({arm: r2(o.arm)}));
+      add(ap.crossings, "crossing", o => ({w: r2(o.w), d: o.d}));
+      for (const [a, b] of ap.wires) if (mine(a)) sec.power.push({kind: "minor_line", auto: true, pts: [L(...a), L(...b)]});
+      delete sec._roadsLL;
+      log(`  ${sec.id}: 電柱・街灯・信号・横断歩道を自動で ${na} 個`);
     }
     log(`  ${sec.id}: 建物 ${nb}・道 ${sec.roads.length}・木や小物 ${sec.points.length}`);
   }

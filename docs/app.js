@@ -3,7 +3,9 @@
 import * as G from "./lib/geo.js";
 import { registerGsiDem } from "./lib/gsidem.js";
 import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js";
-import { exportData, OMT_TILEJSON } from "./lib/export.js";
+import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js";
+import { omtArea } from "./lib/omttile.js";
+import { ROAD, autoProps, greenTrees, rowTrees } from "./lib/props.js";
 import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
@@ -18,7 +20,7 @@ const DEF = {
   view: {center: [139.7005, 35.6595], zoom: 16.4, bearing: -20, pitch: 58}, mode: "oblique",
   place: {name: "渋谷スクランブル交差点", c: [139.7005, 35.6595]},
   base: "map", terrain: true, trees: true, fog: 1, eyeH: 60, gridLevel: 4, showGrid: true,
-  outside: "none", outsideR: 2000, shapes: [], nextId: 1, near: true, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
+  outside: "none", outsideR: 2000, shapes: [], nextId: 1, near: true, look: true, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
 };
 let S;
 try { S = Object.assign(clone(DEF), JSON.parse(localStorage.getItem("rokehan") || "{}")); } catch { S = clone(DEF); }
@@ -75,6 +77,7 @@ if (!OMT) setTimeout(() => toast("建物の地図データ（OpenFreeMap）が�
 // the centre may float above the ground, and the camera may go down to the ground or below it.
 const map3 = new maplibregl.Map({container: "map3d", style: style("3d"), center: S.view.center, zoom: Math.min(S.view.zoom, 23),
   bearing: S.view.bearing, pitch: Math.min(S.view.pitch, 85), maxPitch: 150, maxZoom: 24, centerClampedToGround: false,
+  canvasContextAttributes: {antialias: PC},
   attributionControl: {compact: true}});
 if (!PC) { map3.dragPan.disable(); map3.touchZoomRotate.disable(); map3.touchPitch.disable(); map3.doubleClickZoom.disable(); }
 map3.scrollZoom.disable();                        // the wheel moves the camera itself (no end to zooming in)
@@ -131,7 +134,7 @@ function ready() {
   map3.on("moveend", () => {
     S.view = {center: map3.getCenter().toArray(), zoom: map3.getZoom(), bearing: map3.getBearing(), pitch: map3.getPitch()};
     const c = getCam(); S.cam = {p: c.p, alt: c.alt, b: c.b, t: c.t};
-    save(); renderGrid(); loadTrees();
+    save(); renderGrid(); loadOsm();
   });
   map3.on("move", updateCam);
   map3.on("idle", countNear);
@@ -145,7 +148,7 @@ function ready() {
       if (c.lng < inner[0] || c.lng > inner[2] || c.lat < inner[1] || c.lat > inner[3]) mapT.easeTo({center: c, duration: 400});
     });
   }
-  loadTrees();
+  loadOsm();
 }
 
 // ------------------------------------------------------------------ camera
@@ -314,7 +317,24 @@ function renderShapes() {
     m.getSource("shapes").setData({type: "FeatureCollection", features: fs});
     m.getSource("handles").setData({type: "FeatureCollection", features: hs});
   }
-  renderLabels(); renderList(); renderSel(); renderEstimate();
+  renderLabels(); renderList(); renderSel(); renderEstimate(); syncOverlay();
+}
+// The detailed view covers the map near the camera with its own ground, so it draws the range outlines, the one
+// being drawn and the mesh grid itself.
+let draftRing = null;
+function syncOverlay() {
+  if (!detail) return;
+  const lines = [];
+  const R = S.nearR + 40, t = nearAt;
+  if (t && S.showGrid) {
+    const [dn, dl] = G.meshStep(S.gridLevel), m = G.mPerDeg(t[1]);
+    const w = t[0] - R / m.lon, e = t[0] + R / m.lon, s = t[1] - R / m.lat, n = t[1] + R / m.lat;
+    for (let x = Math.floor(w / dl) * dl; x <= e; x += dl) lines.push({pts: [[x, s], [x, n]], color: "#3c3c5a", width: 0.6, dash: 4});
+    for (let y = Math.floor(s / dn) * dn; y <= n; y += dn) lines.push({pts: [[w, y], [e, y]], color: "#3c3c5a", width: 0.6, dash: 4});
+  }
+  for (const sh of S.shapes) lines.push({pts: ringOf(sh), color: colorOf(sh), width: sh.id === sel ? 2.4 : 1.6, dash: sh.level === "far" ? 4 : 0});
+  if (draftRing) lines.push({pts: draftRing, color: "#f39a2b", width: 2, dash: 3});
+  detail.setOverlay(lines);
 }
 const markers = [];
 function renderLabels() {
@@ -330,6 +350,7 @@ function renderLabels() {
 function setDraft(sh) {
   const data = sh ? {type: "FeatureCollection", features: [{type: "Feature", properties: {}, geometry: {type: "LineString", coordinates: ringOf(sh)}}]} : EMPTY;
   maps.forEach(m => m.getSource("draft") && m.getSource("draft").setData(data));
+  draftRing = sh ? ringOf(sh) : null; syncOverlay();
 }
 function setTool(t) {
   tool = t;
@@ -428,6 +449,7 @@ function renderGrid() {
     for (let y = s; y <= b.getNorth() + dn && fs.length < 1200; y += dn) fs.push({type: "Feature", properties: {}, geometry: {type: "LineString", coordinates: [[b.getWest() - dl, y], [b.getEast() + dl, y]]}});
     m.getSource("grid").setData({type: "FeatureCollection", features: fs});
   }
+  syncOverlay();
 }
 // camera of the 3D view on the top map
 function updateCam() {
@@ -458,6 +480,8 @@ function clearNear() {
   nearAt = null;
   if (map3.getSource("near")) map3.getSource("near").setData(EMPTY);
   if (map3.getLayer("bld")) map3.setFilter("bld", BLD_FILTER);
+  if (detail) detail.clear();
+  if (map3.getLayer("trees")) map3.setLayoutProperty("trees", "visibility", "visible");
   renderNearLegend(null);
 }
 function renderNearLegend(counts) {
@@ -472,62 +496,120 @@ async function loadNear(force) {
   if (nearBusy) { nearAgain = true; return; }
   nearBusy = true;
   try {
-    const bb = [...G.offset(target, -R - 60, -R - 60), ...G.offset(target, R + 60, R + 60)];
-    const list = await gsiBuildings(bb);
+    const bb = [...G.offset(target, -R - 160, -R - 160), ...G.offset(target, R + 160, R + 160)];
+    const tpl = OMT && OMT.tiles && OMT.tiles[0];
+    const [list, area] = await Promise.all([gsiBuildings(bb), tpl ? omtArea(tpl, bb) : {roads: [], buildings: [], green: []}]);
     if (!S.near) return;
-    // heights from the map data, matched by position
-    const omt = [];
-    if (map3.getSource("omt")) for (const f of map3.querySourceFeatures("omt", {sourceLayer: "building"})) {
-      const g = f.geometry, polys = g.type === "Polygon" ? [g.coordinates] : g.type === "MultiPolygon" ? g.coordinates : [];
-      for (const p of polys) omt.push({rings: p, h: f.properties.render_height, minH: f.properties.render_min_height || 0});
-    }
-    const omtAt = makeLookup(omt);
-    const fs = [], counts = {};
+    const omtAt = makeLookup(area.buildings);          // heights from the map data, matched by position
+    const near = [], counts = {};
     for (const b of list) {
       const outer = b.rings[0], cen = G.ringCentroid(outer);
       if (G.dist(target, cen) > R && !outer.some(p => G.dist(target, p) < R)) continue;
-      const kind = KIND_OF_CODE[b.code] || "building", st = NEAR_STYLE[kind];
-      const area = G.ringArea(outer.map(p => G.delta(outer[0], p)));
+      const kind = KIND_OF_CODE[b.code] || "building";
+      const area2 = G.ringArea(outer.map(p => G.delta(outer[0], p)));
       const o = omtAt(cen);
-      const h = o && o.h > 0 && o.h !== 5 ? o.h : guessHeight(kind, area), base = o ? o.minH : 0;
+      const h = o && o.h > 0 && o.h !== 5 ? o.h : guessHeight(kind, area2), base = o ? o.minH : 0;
       counts[kind] = (counts[kind] || 0) + 1;
-      if (kind === "shed") { fs.push(feat(b.rings, base + 2.4, base + 2.4 + st.roofT, st.roof)); continue; }
-      fs.push(feat(b.rings, base, base + h, st.wall));
-      fs.push(feat(b.rings, base + h, base + h + st.roofT, st.roof));
-      if (st.line) {                       // floor lines every 3.4 m, a little outside the wall (about 0.25 m)
-        const k = 1 + 0.25 / Math.max(4, Math.sqrt(area));
-        const ring = outer.map(p => [cen[0] + (p[0] - cen[0]) * k, cen[1] + (p[1] - cen[1]) * k]);
-        for (let z = 3.4, n = 0; z < h - 1.5 && n < 45; z += 3.4, n++) fs.push(feat([ring], base + z - 0.13, base + z + 0.13, st.line));
-      }
+      near.push({rings: b.rings, kind, h, base, area: area2});
     }
-    map3.getSource("near").setData({type: "FeatureCollection", features: fs});
+    const d = S.look ? await ensureDetail() : null;
+    if (!S.near) return;
+    if (d) {
+      map3.getSource("near").setData(EMPTY);
+      const inR = p => G.dist(target, p) < R + 25;
+      const roads = area.roads.filter(r => r.pts.some(p => G.dist(target, p) < R + 150));      // (rails are drawn, but get no poles)
+      const osm = osmNear(target, R + 160);
+      const props = autoProps(roads, osm);
+      const keep = o => inR(o.p);
+      for (const k of ["poles", "lamps", "signals", "crossings"]) props[k] = props[k].filter(keep);
+      props.wires = props.wires.filter(w => inR(w[0]) && inR(w[1]));
+      const drawRoads = [];
+      for (const r of roads) {                       // only the parts inside the circle
+        let run = [];
+        for (const p of r.pts) { if (inR(p)) run.push(p); else { if (run.length > 1) drawRoads.push({...r, pts: run}); run = []; } }
+        if (run.length > 1) drawRoads.push({...r, pts: run});
+      }
+      const trees = !S.trees ? [] : osm.trees.concat(rowTrees(osm.rows)).filter(inR).concat(greenTrees(area.green, inR, PC ? 6000 : 2500));
+      window.__detailStats = d.build({origin: target, R, ground: groundAt, buildings: near, roads: drawRoads, props, trees, green: area.green});
+      if (map3.getLayer("trees")) map3.setLayoutProperty("trees", "visibility", "none");
+    } else {
+      if (detail) detail.clear();
+      if (map3.getLayer("trees")) map3.setLayoutProperty("trees", "visibility", "visible");
+      const fs = [];
+      for (const b of near) {
+        const st = NEAR_STYLE[b.kind], outer = b.rings[0], cen = G.ringCentroid(outer), {h, base} = b;
+        if (b.kind === "shed") { fs.push(feat(b.rings, base + 2.4, base + 2.4 + st.roofT, st.roof)); continue; }
+        fs.push(feat(b.rings, base, base + h, st.wall));
+        fs.push(feat(b.rings, base + h, base + h + st.roofT, st.roof));
+        if (st.line) {                               // floor lines every 3.4 m, a little outside the wall (about 0.25 m)
+          const k = 1 + 0.25 / Math.max(4, Math.sqrt(b.area));
+          const ring = outer.map(p => [cen[0] + (p[0] - cen[0]) * k, cen[1] + (p[1] - cen[1]) * k]);
+          for (let z = 3.4, n = 0; z < h - 1.5 && n < 45; z += 3.4, n++) fs.push(feat([ring], base + z - 0.13, base + z + 0.13, st.line));
+        }
+      }
+      map3.getSource("near").setData({type: "FeatureCollection", features: fs});
+    }
     if (map3.getLayer("bld")) map3.setFilter("bld", ["all", BLD_FILTER, [">", ["distance", {type: "Point", coordinates: target}], R]]);
     nearAt = target;
+    syncOverlay();
     renderNearLegend(counts);
   } catch (e) { console.warn("near buildings", e); }
   finally { nearBusy = false; if (nearAgain) { nearAgain = false; setTimeout(() => loadNear(), 50); } }
 }
+// the detailed look (three.js) is loaded the first time it is needed
+let detail = null, detailLoading = null;
+function ensureDetail() {
+  if (detail) return Promise.resolve(detail);
+  if (!detailLoading) detailLoading = import("./lib/scene3d.js").then(m => m.createDetail(map3, ROAD)).then(d => {
+    map3.addLayer(d.layer, map3.getLayer("grid") ? "grid" : undefined);
+    return (detail = d);
+  }).catch(e => { console.warn("detail", e); toast("細かい見た目を読み込めませんでした（通信を確かめてください）"); detailLoading = null; return null; });
+  return detailLoading;
+}
 
-// ------------------------------------------------------------------ trees near the view (3D only, small Overpass query, cached)
-const treeCells = new Map();
-let treeBusy = false, treeLast = 0;
-async function loadTrees() {
-  if (!S.trees || !map3.getSource("trees")) return;
-  if (map3.getZoom() < 15.3) return;
-  const c = map3.getCenter(), code = G.meshCode(c.lat, c.lng, 4);
-  if (treeCells.has(code) || treeBusy || Date.now() - treeLast < 2500) return;
-  treeBusy = true; treeLast = Date.now();
+// ------------------------------------------------------------------ OpenStreetMap things near the view (trees, signals, lamps, poles)
+// One Overpass request for the 500 m cells around the view that are not loaded yet; kept for the session.
+const osmCells = new Map();                        // 1/2 mesh code -> {trees, signals, lamps, poles, rows}
+let osmBusy = false, osmLast = 0;
+async function loadOsm() {
+  if (!S.trees && !(S.near && S.look)) return;
+  if (map3.getZoom() < 15.3 || heightAbove(getCam()) > 1500) return;
+  const t = lookPoint(), R = (S.near ? S.nearR : 250) + 150;
+  const cells = G.meshCells([...G.offset(t, -R, -R), ...G.offset(t, R, R)], 4).filter(c => !osmCells.has(c));
+  if (!cells.length || osmBusy || Date.now() - osmLast < 2500) return;
+  osmBusy = true; osmLast = Date.now();
   try {
-    const [w, s, e, n] = G.meshBounds(code);
-    const q = `[out:json][timeout:25];node["natural"="tree"](${s},${w},${n},${e});out qt;`;
-    const res = await fetch("https://overpass-api.de/api/interpreter", {method: "POST", body: "data=" + encodeURIComponent(q), headers: {"Content-Type": "application/x-www-form-urlencoded"}});
-    const js = res.ok ? await res.json() : {elements: []};
-    treeCells.set(code, (js.elements || []).map(el => {
-      const ring = []; for (let i = 0; i <= 8; i++) ring.push(G.offset([el.lon, el.lat], 2.6 * Math.cos(i / 8 * 2 * Math.PI), 2.6 * Math.sin(i / 8 * 2 * Math.PI)));
+    const bb = G.bboxOf(cells.flatMap(c => { const b = G.meshBounds(c); return [[b[0], b[1]], [b[2], b[3]]]; }));
+    const box = `${bb[1]},${bb[0]},${bb[3]},${bb[2]}`;
+    const q = `[out:json][timeout:30];(node["natural"="tree"](${box});node["highway"~"^(traffic_signals|street_lamp)$"](${box});` +
+      `node["power"="pole"](${box});node["man_made"="utility_pole"](${box}););out qt;way["natural"="tree_row"](${box});out geom qt;`;
+    const js = await overpass(q, () => {});
+    for (const c of cells) osmCells.set(c, {trees: [], signals: [], lamps: [], poles: [], rows: []});
+    for (const el of js.elements || []) {
+      const p = el.type === "node" ? [el.lon, el.lat] : el.geometry && el.geometry.length ? [el.geometry[0].lon, el.geometry[0].lat] : null;
+      if (!p) continue;
+      const code = G.meshCode(p[1], p[0], 4);
+      if (!cells.includes(code)) continue;
+      const cell = osmCells.get(code), tg = el.tags || {};
+      if (el.type === "way") cell.rows.push(el.geometry.map(g => [g.lon, g.lat]));
+      else if (tg.natural === "tree") cell.trees.push(p);
+      else if (tg.highway === "traffic_signals") cell.signals.push(p);
+      else if (tg.highway === "street_lamp") cell.lamps.push(p);
+      else cell.poles.push(p);
+    }
+    const all = [...osmCells.values()].flatMap(c => c.trees);
+    map3.getSource("trees").setData({type: "FeatureCollection", features: all.map(p => {
+      const ring = []; for (let i = 0; i <= 8; i++) ring.push(G.offset(p, 2.6 * Math.cos(i / 8 * 2 * Math.PI), 2.6 * Math.sin(i / 8 * 2 * Math.PI)));
       return {type: "Feature", properties: {}, geometry: {type: "Polygon", coordinates: [ring]}};
-    }));
-    map3.getSource("trees").setData({type: "FeatureCollection", features: [...treeCells.values()].flat()});
-  } catch {} finally { treeBusy = false; }
+    })});
+    if (S.near && S.look) loadNear(true);
+  } catch (e) { console.warn("osm", e); } finally { osmBusy = false; }
+}
+function osmNear(t, R) {
+  const out = {trees: [], signals: [], lamps: [], poles: [], rows: []};
+  for (const c of osmCells.values()) for (const k of Object.keys(out))
+    for (const p of c[k]) if (k === "rows" ? p.some(q => G.dist(t, q) < R) : G.dist(t, p) < R) out[k].push(p);
+  return out;
 }
 
 // buildings near the centre (from the tiles already shown)
@@ -628,9 +710,10 @@ bindSeg("#outseg", "outside", "o", () => { $("#outRrow").style.display = S.outsi
 $("#outRrow").style.display = S.outside === "far" ? "" : "none";
 const bindCheck = (id, key, after) => { $(id).checked = !!S[key]; $(id).addEventListener("change", e => { S[key] = e.target.checked; save(); after && after(); }); };
 bindCheck("#terrainOn", "terrain", applyTerrain);
-bindCheck("#treesOn", "trees", () => { if (!S.trees) map3.getSource("trees").setData(EMPTY); else loadTrees(); });
+bindCheck("#treesOn", "trees", () => { if (!S.trees) map3.getSource("trees").setData(EMPTY); else loadOsm(); loadNear(true); });
 bindCheck("#gridOn", "showGrid", renderGrid);
-bindCheck("#nearOn", "near", () => { if (S.near) loadNear(true); else clearNear(); });
+bindCheck("#nearOn", "near", () => { if (S.near) { loadNear(true); loadOsm(); } else clearNear(); });
+bindCheck("#lookOn", "look", () => { loadNear(true); loadOsm(); });
 $("#nearR").value = String(S.nearR);
 $("#nearR").addEventListener("change", e => { S.nearR = +e.target.value; save(); loadNear(true); });
 renderNearLegend(null);
@@ -769,4 +852,4 @@ document.addEventListener("keydown", e => {
 
 setTool("select");
 renderList(); renderSel(); renderEstimate();
-window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, getCam, dolly, turn, pan, groundAt, map3, loadNear, get sel() { return sel; }};
+window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, getCam, dolly, turn, pan, groundAt, map3, loadNear, loadOsm, get detail() { return detail; }, get sel() { return sel; }};
