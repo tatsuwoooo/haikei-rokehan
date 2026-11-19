@@ -7,9 +7,10 @@ import * as G from "./geo.js";
 import { decodeTile, polygons } from "./mvt.js";
 import { makeZip } from "./zip.js";
 import { GSI_DEM, GSI_DEM5A } from "./gsidem.js";
-import { gsiTile, makeLookup, guessHeight, KIND_OF_CODE } from "./gsibldg.js";
+import { gsiTile, gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE } from "./gsibldg.js";
 import { ringOf, bboxOfShape, LEVELS } from "./shapes.js";
-import { autoProps, classOfOsm } from "./props.js";
+import { autoProps, classOfOsm, treesFor } from "./props.js";
+import { photoMask } from "./phototrees.js";
 import { omtArea } from "./omttile.js";
 
 // Order of tries: the main server gets most of them; the backups are often unreachable, so they get a short limit.
@@ -76,7 +77,7 @@ way["natural"~"^(water|wood|scrub|grassland)$"](${bb});relation["natural"="water
 way["leisure"~"^(park|garden|pitch|playground)$"](${bb});
 way["landuse"~"^(grass|forest|cemetery|railway|parking|construction|meadow)$"](${bb});
 way["amenity"="parking"](${bb});way["barrier"](${bb});way["power"~"^(line|minor_line)$"](${bb});
-way["man_made"~"^(bridge|pier)$"](${bb});
+way["man_made"~"^(bridge|pier)$"](${bb});way["natural"="tree_row"](${bb});
 node["natural"="tree"](${bb});
 node["highway"~"^(street_lamp|traffic_signals|crossing|bus_stop|stop|give_way)$"](${bb});
 node["amenity"~"^(vending_machine|bench|post_box|telephone|bicycle_parking|waste_basket|toilets)$"](${bb});
@@ -275,8 +276,16 @@ export async function exportData({shapes, settings, place, omtTiles, onProgress 
         else if (t.barrier) sec.barriers.push(Object.assign(rec, {kind: t.barrier}));
         else if (t.power) sec.power.push(Object.assign(rec, {kind: t.power}));
         else if (t.man_made) sec.areas.push({id: rec.id, kind: t.man_made, line: rec.pts, tags: rec.tags});
+        else if (t.natural === "tree_row") (sec._rowsLL || (sec._rowsLL = [])).push(line);
       }
     }
+    // the map tiles the 3D view uses (roads, green areas), so what is placed below stands where the browser showed it
+    let area = null;
+    try {
+      const tpl = omtTiles || (await (await fetch(OMT_TILEJSON)).json()).tiles[0];
+      area = await omtArea(tpl, pad(sec.bounds, 250));
+    } catch {}
+    const mine = p => rankAt(p)[0] === 3 && G.meshCode(p[1], p[0], 4) === sec.mesh;
     // street furniture placed from the road shapes (the same rules as the 3D view); only what stands in this cell
     if (sec._roadsLL) {
       const osm = {signals: [], lamps: [], poles: []};
@@ -289,14 +298,8 @@ export async function exportData({shapes, settings, place, omtTiles, onProgress 
       }
       // roads from the same map tiles as the 3D view, so the poles stand where the browser showed them
       // (the OpenStreetMap roads of this section are used only if the tiles cannot be read)
-      let roadsForProps = sec._roadsLL;
-      try {
-        const tpl = omtTiles || (await (await fetch(OMT_TILEJSON)).json()).tiles[0];
-        const area = await omtArea(tpl, pad(sec.bounds, 250));
-        if (area.roads.length) roadsForProps = area.roads;
-      } catch {}
+      const roadsForProps = area && area.roads.length ? area.roads : sec._roadsLL;
       const ap = autoProps(roadsForProps, osm);
-      const mine = p => rankAt(p)[0] === 3 && G.meshCode(p[1], p[0], 4) === sec.mesh;
       let na = 0;
       const add = (list, kind, extra) => { for (const o of list) if (!o.osm && mine(o.p)) { sec.points.push({kind, auto: true, p: L(...o.p), a: r2(o.a), ...extra(o)}); na++; } };
       add(ap.poles, "utility_pole", () => ({}));
@@ -306,6 +309,27 @@ export async function exportData({shapes, settings, place, omtTiles, onProgress 
       for (const [a, b] of ap.wires) if (mine(a)) sec.power.push({kind: "minor_line", auto: true, pts: [L(...a), L(...b)]});
       delete sec._roadsLL;
       log(`  ${sec.id}: 電柱・街灯・信号・横断歩道を自動で ${na} 個`);
+    }
+    // trees besides the OpenStreetMap ones (the same as the 3D view): tree rows, woods and parks, and the aerial photo
+    {
+      const osmTrees = (js.elements || []).filter(el => el.type === "node" && el.tags && el.tags.natural === "tree").map(el => [el.lon, el.lat]);
+      const bbox = sec.bounds.slice();
+      let mask = null, inBuilding = null;
+      try { mask = await photoMask(bbox); } catch {}
+      try { inBuilding = makeLookup(await gsiBuildings(pad(bbox, 30))); } catch {}
+      const trees = treesFor({osmTrees, rows: sec._rowsLL || [], green: area ? area.green : [], roads: area ? area.roads : [],
+        inBuilding, mask, bbox, keep: mine, max: 80000});
+      const cnt = {};
+      for (const t of trees) {
+        if (t.src === "osm") continue;
+        const o = {kind: "tree", auto: true, src: t.src, p: L(...t.p)};
+        if (t.r) o.r = t.r;
+        sec.points.push(o); cnt[t.src] = (cnt[t.src] || 0) + 1;
+      }
+      delete sec._rowsLL;
+      const nm = {row: "並木", wood: "林", park: "公園", photo: "写真から"};
+      const parts = Object.keys(cnt).map(k => `${nm[k] || k} ${cnt[k]}`);
+      log(`  ${sec.id}: 木を自動で ${parts.length ? parts.join("・") : "0"}` + (mask && mask.ok < mask.tiles ? `（写真 ${mask.tiles - mask.ok} 枚が読めず）` : mask ? "" : "（写真を読めず）"));
     }
     log(`  ${sec.id}: 建物 ${nb}・道 ${sec.roads.length}・木や小物 ${sec.points.length}`);
   }
@@ -432,7 +456,7 @@ export async function exportData({shapes, settings, place, omtTiles, onProgress 
     settings, ranges: ranges.map(r => ({id: r.id, name: r.name, level: r.level, kind: r.kind, outside: !!r.outside, ring_lonlat: r.ring, ring_local: LR(r.ring), shape: r.shape || null})),
     sections: secList,
     terrain: {encoding: "gsi-png: h = (R*65536+G*256+B)*0.01 m, (128,0,0) = no data", tiles: tlist.filter(([, t]) => !t.missing).map(([name, t]) => ({file: name, ...t}))},
-    attribution: ["© OpenStreetMap contributors (ODbL)", "OpenFreeMap © OpenMapTiles", "国土地理院 標高タイル"],
+    attribution: ["© OpenStreetMap contributors (ODbL)", "OpenFreeMap © OpenMapTiles", "国土地理院 標高タイル", "国土地理院 ベクトルタイル（建物の種類）", "国土地理院 シームレス空中写真（木の位置の推定）"],
   };
   files.unshift({name: "manifest.json", data: JSON.stringify(manifest, null, 1)});
   const blob = await makeZip(files, (i, n) => onProgress("ファイルにまとめています", 0.93 + 0.07 * i / n));

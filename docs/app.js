@@ -5,7 +5,8 @@ import { registerGsiDem } from "./lib/gsidem.js";
 import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js";
 import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js";
 import { omtArea } from "./lib/omttile.js";
-import { ROAD, autoProps, greenTrees, rowTrees } from "./lib/props.js";
+import { ROAD, autoProps, treesFor } from "./lib/props.js";
+import { photoMask } from "./lib/phototrees.js";
 import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
@@ -20,7 +21,7 @@ const DEF = {
   view: {center: [139.7005, 35.6595], zoom: 16.4, bearing: -20, pitch: 58}, mode: "oblique",
   place: {name: "渋谷スクランブル交差点", c: [139.7005, 35.6595]},
   base: "photo", terrain: true, trees: true, fog: 1, eyeH: 60, gridLevel: 4, showGrid: true,
-  outside: "none", outsideR: 2000, shapes: [], nextId: 1, near: true, look: true, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
+  outside: "none", outsideR: 2000, shapes: [], nextId: 1, near: true, look: true, moveQ: 0.5, nearR: PC ? 400 : 250,      // phones draw a smaller circle by kind (lighter)
 };
 let S;
 try { S = Object.assign(clone(DEF), JSON.parse(localStorage.getItem("rokehan") || "{}")); } catch { S = clone(DEF); }
@@ -165,7 +166,25 @@ function getCam() {
   return {p: [ll.lng, ll.lat], alt: tr.getCameraAltitude(), b: map3.getBearing(), t: map3.getPitch()};
 }
 const heightAbove = c => c.alt - groundAt(c.p);
+// While the camera is moving, the 3D view is drawn with fewer pixels (S.moveQ of the screen's own sharpness on
+// each side, so 0.5 = a quarter of the pixels) and goes back to sharp shortly after it stops. A single jump (a button,
+// GPS) stays sharp: only moves that come in quick succession count. A finger or mouse button still held keeps it coarse.
+let coarse = false, coarseT = 0, lastCam = 0, holding = 0;
+const sharpRatio = () => window.devicePixelRatio || 1;
+function moving() {
+  const now = performance.now(), quick = now - lastCam < 150;
+  lastCam = now;
+  if (!(S.moveQ < 1)) return;
+  if (!coarse && quick) { coarse = true; map3.setPixelRatio(Math.max(0.5, sharpRatio() * S.moveQ)); }
+  if (coarse) { clearTimeout(coarseT); coarseT = setTimeout(sharpen, 200); }
+}
+function sharpen() {
+  if (!coarse) return;
+  if (holding) { coarseT = setTimeout(sharpen, 120); return; }
+  coarse = false; map3.setPixelRatio(sharpRatio());
+}
 function setCam(p, alt, b, t, D) {
+  moving();
   t = Math.max(0, Math.min(150, t));
   const ground = groundAt(p), h = alt - ground;
   if (D == null) D = (t < 84 && h > 0) ? Math.min(h / Math.cos(t * RAD), 4000) : Math.max(12, Math.min(Math.abs(h) * 1.5, 400));
@@ -230,7 +249,7 @@ let editingNow = false;                            // set while the range editor
   const el = map3.getCanvasContainer();
   let last = null, orb = null;
   const pts = e => [...e.touches].map(t => { const r = el.getBoundingClientRect(); return [t.clientX - r.left, t.clientY - r.top]; });
-  el.addEventListener("touchstart", e => { last = pts(e); orb = null; const h = $("#hintPhone"); if (h) setTimeout(() => h.remove(), 2500); }, {passive: true});
+  el.addEventListener("touchstart", e => { last = pts(e); orb = null; holding = e.touches.length; const h = $("#hintPhone"); if (h) setTimeout(() => h.remove(), 2500); }, {passive: true});
   el.addEventListener("touchmove", e => {
     if (editingNow) { last = pts(e); orb = null; return; }
     const now = pts(e);
@@ -248,7 +267,8 @@ let editingNow = false;                            // set while the range editor
     }
     last = now;
   }, {passive: false});
-  el.addEventListener("touchend", e => { last = pts(e); orb = null; }, {passive: true});
+  el.addEventListener("touchend", e => { last = pts(e); orb = null; holding = e.touches.length; }, {passive: true});
+  el.addEventListener("touchcancel", () => { last = null; orb = null; holding = 0; }, {passive: true});
 })();
 
 // mouse (PC): left drag = orbit (as above), right drag = move. MapLibre's own dragging is switched off.
@@ -261,6 +281,7 @@ let editingNow = false;                            // set while the range editor
   el.addEventListener("mousedown", e => {
     if (e.button !== 0 && e.button !== 2) return;
     d = {btn: e.button, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, on: false, o: null};
+    holding = 1;
   });
   addEventListener("mousemove", e => {
     if (!d) return;
@@ -270,7 +291,7 @@ let editingNow = false;                            // set while the range editor
     else pan(e.clientX - d.x, e.clientY - d.y);
     d.x = e.clientX; d.y = e.clientY;
   });
-  addEventListener("mouseup", () => { d = null; });
+  addEventListener("mouseup", () => { d = null; holding = 0; });
 })();
 
 // height / tilt readout and "back above the ground"
@@ -523,7 +544,9 @@ async function loadNear(force) {
   try {
     const bb = [...G.offset(target, -R - 160, -R - 160), ...G.offset(target, R + 160, R + 160)];
     const tpl = OMT && OMT.tiles && OMT.tiles[0];
-    const [list, area] = await Promise.all([gsiBuildings(bb), tpl ? omtArea(tpl, bb) : {roads: [], buildings: [], green: []}]);
+    const tbb = [...G.offset(target, -R - 25, -R - 25), ...G.offset(target, R + 25, R + 25)];
+    const [list, area, mask] = await Promise.all([gsiBuildings(bb), tpl ? omtArea(tpl, bb) : {roads: [], buildings: [], green: []},
+      S.trees && S.look ? photoMask(tbb).catch(() => null) : null]);
     if (!S.near) return;
     const omtAt = makeLookup(area.buildings);          // heights from the map data, matched by position
     const near = [], counts = {};
@@ -554,7 +577,8 @@ async function loadNear(force) {
         for (const p of r.pts) { if (inR(p)) run.push(p); else { if (run.length > 1) drawRoads.push({...r, pts: run}); run = []; } }
         if (run.length > 1) drawRoads.push({...r, pts: run});
       }
-      const trees = !S.trees ? [] : osm.trees.concat(rowTrees(osm.rows)).filter(inR).concat(greenTrees(area.green, inR, PC ? 6000 : 2500));
+      const trees = !S.trees ? [] : treesFor({osmTrees: osm.trees, rows: osm.rows, green: area.green, roads: area.roads,
+        inBuilding: makeLookup(list), mask, bbox: tbb, keep: inR, max: PC ? 9000 : 3500});
       window.__detailStats = d.build({origin: target, R, ground: groundAt, buildings: near, roads: drawRoads, props, trees, green: area.green, photo: S.base === "photo"});
       if (map3.getLayer("trees")) map3.setLayoutProperty("trees", "visibility", "none");
     } else {
@@ -742,6 +766,8 @@ bindCheck("#treesOn", "trees", () => { if (!S.trees) map3.getSource("trees").set
 bindCheck("#gridOn", "showGrid", renderGrid);
 bindCheck("#nearOn", "near", () => { if (S.near) { loadNear(true); loadOsm(); } else clearNear(); });
 bindCheck("#lookOn", "look", () => { loadNear(true); loadOsm(); });
+$("#moveQ").value = String(S.moveQ);
+$("#moveQ").addEventListener("change", e => { S.moveQ = +e.target.value; save(); });
 $("#nearR").value = String(S.nearR);
 $("#nearR").addEventListener("change", e => { S.nearR = +e.target.value; save(); loadNear(true); });
 renderNearLegend(null);

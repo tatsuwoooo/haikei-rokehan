@@ -371,12 +371,16 @@ export async function createDetail(map, ROAD) {
     const yaw = aDeg => -aDeg * Math.PI / 180;                  // map angle (east = 0, CCW, north up) -> local (y south)
 
     // trees
-    const trees = data.trees.map(p => { const q = L(p), h = hash(q[0] * 3.1, q[1] * 1.7); return {q, z: gz(q), h, k: hash(q[1], q[0])}; });
+    // trees: [lon, lat] or {p, r (crown radius m, from the photo)}
+    const trees = data.trees.map(t => {
+      const p = t.p || t, q = L(p), h = hash(p[0] * 3.1e4, p[1] * 1.7e4);
+      const r = t.r ? t.r * (0.9 + 0.2 * h) : 1.7 + h * 1.6, ht = t.r ? 1.6 + r * 1.5 + h * 1.5 : 3.2 + h * 3.5;
+      return {q, z: gz(q), h, k: hash(p[1] * 2.3e4, p[0] * 1.1e4), r, ht};
+    });
     const crownG = new THREE.IcosahedronGeometry(1, 1), trunkG = up(new THREE.CylinderGeometry(0.14, 0.2, 1, 6)).translate(0, 0, 0.5);
-    inst(trunkG, mat.trunk, trees, (t, m4) => at(m4, t.q[0], t.q[1], t.z - 0.2, 0, 1, 1, 2.6 + t.h * 2));
+    inst(trunkG, mat.trunk, trees, (t, m4) => at(m4, t.q[0], t.q[1], t.z - 0.2, 0, 1, 1, Math.max(1.5, t.ht - t.r * 0.6)));
     const crowns = inst(crownG, mat.crown, trees, (t, m4) => {
-      const r = 1.7 + t.h * 1.6, ht = 3.2 + t.h * 3.5;
-      at(m4, t.q[0], t.q[1], t.z + ht, t.k * 6, r, r * (0.85 + t.k * 0.3), r * 1.05);
+      at(m4, t.q[0], t.q[1], t.z + t.ht, t.k * 6, t.r, t.r * (0.85 + t.k * 0.3), t.r * 1.05);
     });
     if (crowns) { const greens = ["#5f8c4c", "#4f7d43", "#6b9654", "#577f45", "#7a9a57", "#4a7340"].map(h => new THREE.Color(h));
       trees.forEach((t, i) => crowns.setColorAt(i, greens[Math.floor(t.k * greens.length) % greens.length])); }

@@ -4,6 +4,7 @@
 //   Positions do not depend on how a road is split into pieces: along each straight stretch, things are placed where
 //   a fixed world grid crosses the road (so two data sources with the same road give the same spots).
 import * as G from "./geo.js";
+import { photoTrees } from "./phototrees.js";
 
 // road kinds (OpenMapTiles classes). w = carriageway width (m), walk = sidewalk on each side, rank = importance
 export const ROAD = {
@@ -169,5 +170,54 @@ export function rowTrees(lines) {
       carry = ((carry - L) % 7 + 7) % 7;
     }
   }
+  return out;
+}
+
+// ---- all the trees for an area, the same in the 3D view and in the export
+//   osm trees and tree rows (OpenStreetMap), woods filled every 7 m, and trees read from the aerial photo
+//   (lib/phototrees.js). Parks are filled every 13 m only when the photo could not be read; otherwise the photo
+//   decides where the trees in a park stand (lawns and squares stay open).
+//   o: {osmTrees, rows, green, roads, inBuilding(p), mask (photoMask or null), bbox, keep(p), max}
+//   -> [{p: [lon, lat], src: "osm" | "row" | "wood" | "park" | "photo", r?: crown radius m}]
+export function treesFor(o) {
+  const keep = o.keep || (() => true), max = o.max || 6000, out = [];
+  for (const p of o.osmTrees || []) if (keep(p)) out.push({p, src: "osm"});
+  for (const p of rowTrees(o.rows || [])) if (keep(p)) out.push({p, src: "row"});
+  const usePhoto = !!(o.mask && o.mask.ok);
+  for (const kind of usePhoto ? ["wood"] : ["wood", "park"])
+    for (const p of greenTrees((o.green || []).filter(g => g.kind === kind), keep, max)) out.push({p, src: kind});
+  if (!usePhoto || out.length >= max) return out.slice(0, max);
+
+  // where the photo trees may not stand: buildings, roadways, woods (already filled), water, next to another tree
+  const cell = 0.0004, grid = new Map(), put = (bb, item) => {
+    for (let x = Math.floor(bb[0] / cell); x <= Math.floor(bb[2] / cell); x++)
+      for (let y = Math.floor(bb[1] / cell); y <= Math.floor(bb[3] / cell); y++) {
+        const k = x + "," + y; if (!grid.has(k)) grid.set(k, []); grid.get(k).push(item);
+      }
+  };
+  for (const r of o.roads || []) {
+    const R = ROAD[r.cls]; if (!R || R.rank < 0.5 || r.brunnel === "tunnel") continue;
+    const hw = R.w / 2, pad = hw / 90000;
+    for (let i = 1; i < r.pts.length; i++) {
+      const a = r.pts[i - 1], b = r.pts[i];
+      put([Math.min(a[0], b[0]) - pad, Math.min(a[1], b[1]) - pad, Math.max(a[0], b[0]) + pad, Math.max(a[1], b[1]) + pad], {seg: [a, b], hw});
+    }
+  }
+  for (const g of o.green || []) if (g.kind === "wood" || g.kind === "water") put(G.bboxOf(g.rings[0]), {area: g});
+  for (const t of out) put([t.p[0], t.p[1], t.p[0], t.p[1]], {tree: t.p});
+  const blocked = p => {
+    for (const it of grid.get(Math.floor(p[0] / cell) + "," + Math.floor(p[1] / cell)) || []) {
+      if (it.seg) {
+        const [a, b] = it.seg, d = G.delta(a, b), q = G.delta(a, p), L2 = d[0] * d[0] + d[1] * d[1];
+        const t = L2 ? Math.max(0, Math.min(1, (q[0] * d[0] + q[1] * d[1]) / L2)) : 0;
+        if (Math.hypot(q[0] - d[0] * t, q[1] - d[1] * t) < it.hw) return true;
+      } else if (it.area) {
+        if (G.pointInRing(p, it.area.rings[0]) && !it.area.rings.slice(1).some(h => G.pointInRing(p, h))) return true;
+      } else if (G.dist(it.tree, p) < 3) return true;
+    }
+    return o.inBuilding ? !!o.inBuilding(p) : false;
+  };
+  for (const [lon, lat, r] of photoTrees(o.mask, o.bbox, p => keep(p) && !blocked(p), max - out.length))
+    out.push({p: [lon, lat], src: "photo", r});
   return out;
 }
