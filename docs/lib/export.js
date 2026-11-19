@@ -3,15 +3,15 @@
 //   mid ranges:    OpenFreeMap vector tiles (building footprints + heights, roads), per 3rd mesh
 //   far ranges:    OpenFreeMap vector tiles, every building as a box (centre, width, depth, angle, height)
 //   terrain:       GSI elevation tiles as they are (dem5a z15 for detail, dem z14 / z13)
-import * as G from "./geo.js?v=202611200042";
-import { decodeTile, polygons } from "./mvt.js?v=202611200042";
-import { makeZip } from "./zip.js?v=202611200042";
-import { GSI_DEM, GSI_DEM5A } from "./gsidem.js?v=202611200042";
-import { gsiTile, gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE } from "./gsibldg.js?v=202611200042";
-import { ringOf, bboxOfShape, LEVELS } from "./shapes.js?v=202611200042";
-import { autoProps, classOfOsm, treesFor } from "./props.js?v=202611200042";
-import { photoMask } from "./phototrees.js?v=202611200042";
-import { omtArea } from "./omttile.js?v=202611200042";
+import * as G from "./geo.js?v=202611200101";
+import { decodeTile, polygons } from "./mvt.js?v=202611200101";
+import { makeZip } from "./zip.js?v=202611200101";
+import { GSI_DEM, GSI_DEM5A } from "./gsidem.js?v=202611200101";
+import { gsiTile, gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE } from "./gsibldg.js?v=202611200101";
+import { ringOf, bboxOfShape, LEVELS } from "./shapes.js?v=202611200101";
+import { autoProps, classOfOsm, treesFor } from "./props.js?v=202611200101";
+import { photoMask } from "./phototrees.js?v=202611200101";
+import { omtArea } from "./omttile.js?v=202611200101";
 
 // Order of tries: the main server gets most of them; the backups are often unreachable, so they get a short limit.
 const OVERPASS_MAIN = "https://overpass-api.de/api/interpreter";
@@ -151,7 +151,8 @@ function areaKind(t) {
 }
 
 // ------------------------------------------------------------------ main
-export async function exportData({shapes, settings, place, omtTiles, onProgress = () => {}, log = () => {}}) {
+// folder: every file goes inside this folder of the zip (so unpacking gives one folder); extraFiles are added to it.
+export async function exportData({shapes, settings, place, omtTiles, folder = "", extraFiles = [], onProgress = () => {}, log = () => {}}) {
   const t0 = Date.now();
   const ranges = shapes.filter(s => s.level !== "none").map(s => ({id: s.id, name: s.name, level: s.level, kind: s.kind, ring: ringOf(s), bbox: bboxOfShape(s), shape: s}));
   if (!ranges.length) throw new Error("作る範囲がありません。");
@@ -459,8 +460,10 @@ export async function exportData({shapes, settings, place, omtTiles, onProgress 
     attribution: ["© OpenStreetMap contributors (ODbL)", "OpenFreeMap © OpenMapTiles", "国土地理院 標高タイル", "国土地理院 ベクトルタイル（建物の種類）", "国土地理院 シームレス空中写真（木の位置の推定）"],
   };
   files.unshift({name: "manifest.json", data: JSON.stringify(manifest, null, 1)});
-  const blob = await makeZip(files, (i, n) => onProgress("ファイルにまとめています", 0.93 + 0.07 * i / n));
+  files.push(...extraFiles);
+  const pre = folder ? folder.replace(/\/+$/, "") + "/" : "";
+  const blob = await makeZip(files.map(f => ({name: pre + f.name, data: f.data})), (i, n) => onProgress("ファイルにまとめています", 0.93 + 0.07 * i / n));
   onProgress("できました", 1);
   log(`できました（${(blob.size / 1048576).toFixed(1)} MB・${((Date.now() - t0) / 1000).toFixed(0)} 秒）`);
-  return {blob, manifest};
+  return {blob, manifest, files};
 }

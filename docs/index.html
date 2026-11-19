@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#1f2026">
 <title>背景ロケハン</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.css">
-<link rel="stylesheet" href="style.css?v=202611200042">
+<link rel="stylesheet" href="style.css?v=202611200101">
 </head>
 <body>
 <header id="bar">
@@ -75,7 +75,7 @@
         <pre id="log"></pre>
         <div class="cap">範囲のファイル</div>
         <div class="row2"><button class="ib wide" id="saveBtn">範囲を保存</button><button class="ib wide" id="openBtn">📂 範囲を開く</button></div>
-        <input type="file" id="openFile" accept=".json,application/json" hidden>
+        <input type="file" id="openFile" accept=".json,.zip,application/json,application/zip" hidden>
         <p class="attr">© OpenStreetMap contributors / OpenFreeMap © OpenMapTiles / 国土地理院（地図・写真・標高・建物の種類）</p>
       </section>
     </div>
@@ -101,6 +101,6 @@
 </main>
 <div id="toast"></div>
 <script src="https://unpkg.com/maplibre-gl@5.24.1/dist/maplibre-gl.js"></script>
-<script type="module" src="app.js?v=202611200042"></script>
+<script type="module" src="app.js?v=202611200101"></script>
 </body>
 </html>

@@ -1,14 +1,15 @@
 // 背景ロケハン: pick a place in 3D, place ranges (rect / circle / mesh grid), export the data for Blender.
 // One page for phone and PC: the PC layout adds a top-down map next to the 3D view.
-import * as G from "./lib/geo.js?v=202611200042";
-import { registerGsiDem } from "./lib/gsidem.js?v=202611200042";
-import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611200042";
-import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200042";
-import { omtArea } from "./lib/omttile.js?v=202611200042";
-import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200042";
-import { photoMask } from "./lib/phototrees.js?v=202611200042";
-import { placeName } from "./lib/gsiname.js?v=202611200042";
-import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200042";
+import * as G from "./lib/geo.js?v=202611200101";
+import { registerGsiDem } from "./lib/gsidem.js?v=202611200101";
+import { LEVELS, ringOf, handlesOf, dragHandle, drawShape, sizeText, centerOf, areaOf, fmtM, boxSize, bboxOfShape } from "./lib/shapes.js?v=202611200101";
+import { exportData, OMT_TILEJSON, overpass } from "./lib/export.js?v=202611200101";
+import { omtArea } from "./lib/omttile.js?v=202611200101";
+import { ROAD, autoProps, treesFor } from "./lib/props.js?v=202611200101";
+import { photoMask } from "./lib/phototrees.js?v=202611200101";
+import { unzip } from "./lib/zip.js?v=202611200101";
+import { placeName } from "./lib/gsiname.js?v=202611200101";
+import { gsiBuildings, makeLookup, guessHeight, KIND_OF_CODE, KIND_LABEL } from "./lib/gsibldg.js?v=202611200101";
 
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const PC = matchMedia("(min-width: 900px)").matches;
@@ -639,7 +640,7 @@ async function loadNear(force) {
 let detail = null, detailLoading = null;
 function ensureDetail() {
   if (detail) return Promise.resolve(detail);
-  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200042").then(m => m.createDetail(map3, ROAD)).then(d => {
+  if (!detailLoading) detailLoading = import("./lib/scene3d.js?v=202611200101").then(m => m.createDetail(map3, ROAD)).then(d => {
     map3.addLayer(d.layer, map3.getLayer("grid") ? "grid" : undefined);
     return (detail = d);
   }).catch(e => { console.warn("detail", e); toast("細かい見た目を読み込めませんでした（通信を確かめてください）"); detailLoading = null; return null; });
@@ -906,10 +907,16 @@ $("#locate").addEventListener("click", () => {
 // ------------------------------------------------------------------ save / open ranges, export
 const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
 const safeName = s => (s || "rokehan").replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 40);
-async function deliver(blob, name, label) {
+// folder: {name, files} -> on a PC browser that can write folders, also offer to save it as a real folder
+async function deliver(blob, name, label, folder) {
   const file = new File([blob], name, {type: blob.type});
   const box = $("#result");
   box.innerHTML = "";
+  if (folder && window.showDirectoryPicker) {
+    const b = document.createElement("button"); b.className = "pr wide"; b.textContent = `フォルダとして保存（「${folder.name}」を作ります）`;
+    b.onclick = () => saveFolder(folder).catch(e => { if (e && e.name !== "AbortError") toast("保存できませんでした: " + (e.message || e), 5000); });
+    box.appendChild(b);
+  }
   if (navigator.canShare && navigator.canShare({files: [file]})) {
     const b = document.createElement("button"); b.className = "pr wide"; b.textContent = `${label}を共有（pCloud に保存）`;
     b.onclick = () => navigator.share({files: [file], title: name}).catch(() => {});
@@ -918,14 +925,38 @@ async function deliver(blob, name, label) {
   const a = document.createElement("a"); a.className = "ib wide"; a.textContent = `${label}をダウンロード（${(blob.size / 1048576).toFixed(1)} MB）`;
   a.href = URL.createObjectURL(blob); a.download = name; box.appendChild(a);
   const p = document.createElement("p"); p.className = "note";
-  p.textContent = "pCloud の受け取りフォルダ（_Rokehan）に保存してください。PC で Claude が Blender で組み立てます。";
+  p.textContent = folder
+    ? `「${folder.name}」というフォルダの入った zip です（データと範囲のファイルが入っています）。pCloud の受け取りフォルダ（_Rokehan）に保存してください。PC で Claude が Blender で組み立てます。`
+    : "pCloud の受け取りフォルダ（_Rokehan）に保存してください。PC で Claude が Blender で組み立てます。";
   box.appendChild(p);
+}
+// PC: pick a folder (for example pCloud's _Rokehan), and the export is written into a new folder there
+async function saveFolder({name, files}) {
+  const parent = await window.showDirectoryPicker({id: "rokehan", mode: "readwrite"});
+  const root = await parent.getDirectoryHandle(name, {create: true});
+  let n = 0;
+  for (const f of files) {
+    const parts = f.name.split("/"), fname = parts.pop();
+    let dir = root;
+    for (const p of parts) dir = await dir.getDirectoryHandle(p, {create: true});
+    const w = await (await dir.getFileHandle(fname, {create: true})).createWritable();
+    await w.write(typeof f.data === "string" ? new Blob([f.data], {type: "text/plain"}) : f.data); await w.close();
+    n++;
+  }
+  toast(`「${parent.name}」の中に「${name}」を作りました（${n} ファイル）`, 4000);
+}
+// The folder name for an export: the rough place name of the middle of the ranges (lib/gsiname.js) and the time
+async function exportName() {
+  const list = S.shapes.filter(s => s.level !== "none"), b = G.bboxOf(list.flatMap(ringOf));
+  let nm = null;
+  if (list.length) try { nm = await Promise.race([placeName([(b[0] + b[2]) / 2, (b[1] + b[3]) / 2]), new Promise(r => setTimeout(() => r(null), 4000))]); } catch {}
+  return `${safeName(nm || S.place.name)}_${stamp()}`;
 }
 function rangesFile() { return {app: "haikei-rokehan", version: 1, saved: new Date().toISOString(), place: S.place, view: S.view, outside: S.outside, outsideR: S.outsideR, shapes: S.shapes, favs: S.favs}; }
 async function saveRanges() {
   setTab("export");
   const blob = new Blob([JSON.stringify(rangesFile(), null, 1)], {type: "application/json"});
-  await deliver(blob, `範囲_${safeName(S.place.name)}_${stamp()}.json`, "範囲のファイル");
+  await deliver(blob, `${await exportName()}_範囲.json`, "範囲のファイル");
 }
 function openRanges(text) {
   try {
@@ -946,7 +977,18 @@ function openRanges(text) {
 }
 for (const id of ["#saveBtn", "#saveBtnPC"]) $(id).addEventListener("click", saveRanges);
 for (const id of ["#openBtn", "#openBtnPC"]) $(id).addEventListener("click", () => $("#openFile").click());
-$("#openFile").addEventListener("change", async e => { const f = e.target.files[0]; if (f) openRanges(await f.text()); e.target.value = ""; });
+// a range file (.json), or an exported zip: its 範囲.json (or, from older exports, manifest.json)
+$("#openFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  if (/\.zip$/i.test(f.name) || f.type === "application/zip") {
+    try {
+      const ents = await unzip(new Uint8Array(await f.arrayBuffer()));
+      const pick = ents.find(x => /(^|\/)範囲\.json$/.test(x.name)) || ents.find(x => /(^|\/)manifest\.json$/.test(x.name));
+      if (!pick) throw new Error("範囲の入っていない zip です");
+      openRanges(new TextDecoder().decode(pick.data));
+    } catch (err) { toast("開けませんでした: " + err.message); }
+  } else openRanges(await f.text());
+});
 
 let exporting = false;
 async function runExport() {
@@ -958,11 +1000,14 @@ async function runExport() {
   const log = m => { $("#log").textContent += m + "\n"; $("#log").scrollTop = 1e9; };
   try {
     const src = map3.getSource("omt");
-    const {blob, manifest} = await exportData({shapes: S.shapes, place: S.place, omtTiles: src && src.tiles && src.tiles[0],
+    const folder = await exportName();
+    log(`フォルダの名前: ${folder}`);
+    const extraFiles = [{name: "範囲.json", data: JSON.stringify(rangesFile(), null, 1)}];
+    const {blob, manifest, files} = await exportData({shapes: S.shapes, place: S.place, omtTiles: src && src.tiles && src.tiles[0], folder, extraFiles,
       settings: {outside: S.outside, outsideR: S.outsideR, terrain: $("#incTerrain").checked},
       onProgress: (msg, f) => { $("#progText").textContent = msg; $("#prog .bar b").style.width = Math.round(f * 100) + "%"; }, log});
     window.__lastExport = {blob, manifest};
-    await deliver(blob, `rokehan_${safeName(S.place.name)}_${stamp()}.zip`, "データ");
+    await deliver(blob, `${folder}.zip`, "データ", {name: folder, files: files});
   } catch (e) {
     log("エラー: " + (e && e.message || e)); toast("書き出しに失敗しました: " + (e && e.message || e), 5000);
   } finally { exporting = false; $("#exportBtn").disabled = false; }
@@ -993,7 +1038,7 @@ window.__app = {S, setMode, walk, runExport, addShape, renderShapes, setCam, get
 // GitHub Pages lets a browser keep each file for 10 minutes, and phones keep a page open for days. tools/stamp.py puts
 // the same version on every file URL and in version.json; when version.json says a newer one is out, the page reloads
 // into it once (at the start, and when you come back to the page after a minute or more away).
-const APP_VERSION = "202611200042";
+const APP_VERSION = "202611200101";
 let hiddenAt = 0;
 async function checkVersion() {
   if (!APP_VERSION || exporting) return;

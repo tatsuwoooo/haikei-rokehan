@@ -5,7 +5,7 @@
 //   fan:    {kind:"fan", c:[lon,lat] the point it opens from, r (m), dir (deg, compass: 0 = north, clockwise),
 //            spread (deg, the whole opening, 5..360)}
 // Every range also has id, name, level ("detail" | "mid" | "far" | "none").
-import { offset, delta, meshBounds, meshCode, meshStep } from "./geo.js?v=202611200042";
+import { offset, delta, meshBounds, meshCode, meshStep } from "./geo.js?v=202611200101";
 
 export const LEVELS = {
   detail: {label: "詳細", color: "#f39a2b", rank: 3},
